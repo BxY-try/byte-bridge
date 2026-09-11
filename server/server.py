@@ -39,6 +39,8 @@ from flask_socketio import SocketIO
 import pyautogui
 import pyperclip
 import qrcode
+import psutil
+import ipaddress
 
 # ---------- Konfigurasi ----------
 TCP_PORT = 8080
@@ -61,70 +63,96 @@ app.config["SECRET_KEY"] = "bytebridge_secret_key"
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 
+def get_network_details():
+    """Deteksi detail interface jaringan menggunakan psutil."""
+    interfaces = []
+    wifi_ip = None
+    all_broadcasts = set()
+
+    for iface, addrs in psutil.net_if_addrs().items():
+        for a in addrs:
+            if a.family == socket.AF_INET and not a.address.startswith("127.") and not a.address.startswith("169.254."):
+                try:
+                    net = ipaddress.IPv4Network(f"{a.address}/{a.netmask}", strict=False)
+                    bcast = str(net.broadcast_address)
+                    is_wifi = any(w in iface.lower() for w in ["wi-fi", "wlan", "wireless", "wifi"])
+                    info = {
+                        "name": iface,
+                        "ip": a.address,
+                        "broadcast": bcast,
+                        "is_wifi": is_wifi
+                    }
+                    interfaces.append(info)
+                    if bcast != a.address:
+                        all_broadcasts.add((a.address, bcast))
+                    if is_wifi and not wifi_ip:
+                        wifi_ip = a.address
+                except Exception:
+                    pass
+
+    # Fallback jika wifi_ip belum ketemu
+    if not wifi_ip:
+        for i in interfaces:
+            if i["ip"].startswith("192.168."):
+                wifi_ip = i["ip"]
+                break
+    if not wifi_ip and interfaces:
+        wifi_ip = interfaces[0]["ip"]
+
+    primary_ip = wifi_ip or "127.0.0.1"
+    all_ips = [i["ip"] for i in interfaces] if interfaces else ["127.0.0.1"]
+    return primary_ip, all_ips, interfaces, list(all_broadcasts)
+
+
 def get_all_local_ips():
-    """Ambil semua alamat IPv4 lokal (WiFi, LAN, dll)."""
-    ips = set()
-    try:
-        hostname = socket.gethostname()
-        for ip in socket.gethostbyname_ex(hostname)[2]:
-            if not ip.startswith("127."):
-                ips.add(ip)
-    except Exception:
-        pass
-
-    # Tambahan fallback pakai dummy UDP connect
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        primary = s.getsockname()[0]
-        s.close()
-        ips.add(primary)
-    except Exception:
-        pass
-
-    return sorted(list(ips)) if ips else ["127.0.0.1"]
+    _, all_ips, _, _ = get_network_details()
+    return all_ips
 
 
 def get_primary_ip() -> str:
-    """Ambil IP utama yang paling mungkin digunakan untuk koneksi HP (utamakan 192.168.x.x WiFi)."""
-    all_ips = get_all_local_ips()
-    # Prioritaskan IP class C rumahan (192.168.x.x) karena biasanya interface WiFi
-    for ip in all_ips:
-        if ip.startswith("192.168."):
-            return ip
-    for ip in all_ips:
-        if ip.startswith("10.") or ip.startswith("172."):
-            return ip
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return all_ips[0] if all_ips else "127.0.0.1"
+    primary_ip, _, _, _ = get_network_details()
+    return primary_ip
 
 
 def udp_broadcaster():
-    """Broadcast identitas server via UDP agar Flutter app bisa auto-discover."""
-    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-
+    """Broadcast identitas server via UDP agar Flutter app bisa auto-discover.
+    Memancarkan lewat broadcast subnet langsung dan binding interface fisik (Wi-Fi)
+    agar tidak tertahan atau salah rute oleh VPN (ProTUN/WSL)."""
     while True:
         try:
-            local_ip = get_primary_ip()
+            primary_ip, all_ips, interfaces, broadcast_pairs = get_network_details()
             payload = json.dumps({
                 "service": SERVICE_TAG,
                 "name": "ByteBridge",
-                "ip": local_ip,
+                "ip": primary_ip,
                 "port": TCP_PORT,
             }).encode("utf-8")
-            udp_sock.sendto(payload, ("<broadcast>", UDP_DISCOVERY_PORT))
-        except OSError:
+
+            # 1. Kirim via socket global broadcast
+            try:
+                global_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+                global_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                global_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                global_sock.sendto(payload, ("<broadcast>", UDP_DISCOVERY_PORT))
+                global_sock.sendto(payload, ("255.255.255.255", UDP_DISCOVERY_PORT))
+                global_sock.close()
+            except Exception:
+                pass
+
+            # 2. Kirim via binding tiap interface fisik ke subnet broadcast masing-masing (bypass VPN)
+            for iface_ip, bcast_addr in broadcast_pairs:
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    s.bind((iface_ip, 0))
+                    s.sendto(payload, (bcast_addr, UDP_DISCOVERY_PORT))
+                    s.sendto(payload, ("255.255.255.255", UDP_DISCOVERY_PORT))
+                    s.close()
+                except Exception:
+                    pass
+        except Exception:
             pass
-        except Exception as e:
-            print(f"[Discovery] Error: {e}")
         time.sleep(BROADCAST_INTERVAL)
 
 
@@ -269,25 +297,30 @@ def on_text_input(data):
 
 
 def print_banner(primary_ip, all_ips):
-    """Tampilkan banner terminal yang keren dan QR Code untuk kemudahan akses."""
-    print("=" * 60)
-    print("  🌉  BYTEBRIDGE SERVER — Remote PC Controller via WiFi")
-    print("=" * 60)
+    """Tampilkan banner terminal yang jelas membedakan cara pakai Aplikasi Android vs Web Remote."""
+    print("=" * 64)
+    print("  === BYTEBRIDGE SERVER - PC Remote Controller via WiFi ===")
+    print("=" * 64)
     print()
-    print("  Status: AKTIF & SIAP MENERIMA KONEKSI")
-    print(f"  Port:   {TCP_PORT}")
-    print()
-    print("  Cara Menggunakan di Smartphone Anda:")
-    print("  1. Pastikan HP dan PC terhubung ke WiFi / Hotspot yang SAMA.")
-    print("  2. Buka browser HP (Chrome / Safari / dll) dan buka alamat:")
-    print(f"     👉  http://{primary_ip}:{TCP_PORT}")
+    print("  [+] STATUS     : SERVER AKTIF & SIAP MENERIMA KONEKSI")
+    print(f"  [+] IP WiFi PC : {primary_ip} (Port: {TCP_PORT})")
     if len(all_ips) > 1:
-        print("     Alamat alternatif lain:")
-        for ip in all_ips:
-            if ip != primary_ip:
-                print(f"     - http://{ip}:{TCP_PORT}")
+        other_ips = [ip for ip in all_ips if ip != primary_ip]
+        print(f"  [+] IP Lainnya : {', '.join(other_ips)}")
     print()
-    print("  3. Atau SCAN QR CODE DI BAWAH DENGAN KAMERA HP ANDA:")
+    print("  [A] CARA PAKAI DI APLIKASI ANDROID (APK):")
+    print("  --------------------------------------------------------------")
+    print("  1. Buka aplikasi ByteBridge yang sudah Anda pasang di HP.")
+    print("  2. Pastikan HP dan PC terhubung ke WiFi / Hotspot yang SAMA.")
+    print("  3. Aplikasi akan otomatis mendeteksi server ini.")
+    print(f"     -> JIKA TERTULIS 'Server tidak ditemukan':")
+    print(f"        Tap ikon PENSIL (Edit) di pojok kanan atas aplikasi,")
+    print(f"        lalu ketik IP: {primary_ip} dan tap 'Hubungkan'.")
+    print()
+    print("  [B] ALTERNATIF TANPA INSTALL APLIKASI (WEB REMOTE):")
+    print("  --------------------------------------------------------------")
+    print(f"  Buka browser HP ke: http://{primary_ip}:{TCP_PORT}")
+    print("  Atau SCAN QR CODE DI BAWAH dengan kamera HP Anda:")
     print()
 
     # Cetak QR Code di terminal
@@ -295,17 +328,16 @@ def print_banner(primary_ip, all_ips):
         qr = qrcode.QRCode(box_size=1, border=1)
         qr.add_data(f"http://{primary_ip}:{TCP_PORT}")
         qr.make(fit=True)
-        # Gunakan buffer agar output konsisten
         f = io.StringIO()
         qr.print_ascii(out=f, invert=True)
         print(f.getvalue())
     except Exception:
-        print("  (Kamera HP bisa langsung ketik URL di atas jika QR code tidak muncul)")
+        pass
 
-    print("-" * 60)
-    print("  Fitur Remote: Numpad | Media | Presentasi | Trackpad | Teks")
-    print("  Tekan Ctrl + C di terminal ini untuk mematikan server.")
-    print("=" * 60)
+    print("-" * 64)
+    print("  Fitur Remote : Numpad | Media | Presentasi | Trackpad | Teks")
+    print("  Tekan Ctrl + C di jendela ini untuk mematikan server.")
+    print("=" * 64)
     print()
 
 

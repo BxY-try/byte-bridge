@@ -6,3 +6,4 @@ pyautogui
 qrcode
 colorama
 pyperclip
+psutil
