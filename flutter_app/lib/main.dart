@@ -11,13 +11,13 @@ void main() {
 
 /// Palet warna selaras dengan referensi desain numpad
 class AppColors {
-  static const Color scaffoldBg = Color(0xFFECEFF2);
-  static const Color housingBg = Color(0xFF676B72);
+  static const Color scaffoldBg = Color(0xFFE8EEF1);
+  static const Color housingBg = Color(0xFF8D8D8D);
   static const Color borderDark = Color(0xFF282A2E);
-  static const Color keyNumber = Color(0xFFE8F1F6);
-  static const Color keyOperator = Color(0xFFBCE0EA);
-  static const Color keyDel = Color(0xFFD66363);
-  static const Color keyEnter = Color(0xFF62AD71);
+  static const Color keyNumber = Color(0xFFDCEBF0);
+  static const Color keyOperator = Color(0xFFC4DBE1);
+  static const Color keyDel = Color(0xFFD46C6D);
+  static const Color keyEnter = Color(0xFF72B67D);
   static const Color textDark = Color(0xFF1B1E22);
 }
 
@@ -242,13 +242,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Color get _statusBgColor {
     switch (_state) {
       case ConnState.connected:
-        return const Color(0xFFD7EEDD);
+        return const Color(0xFFE2F3E5);
       case ConnState.failed:
-        return const Color(0xFFFED7D7);
+        return const Color(0xFFFDE8E8);
       case ConnState.disconnected:
-        return const Color(0xFFFEEBC8);
+        return const Color(0xFFFEF3C7);
       default:
-        return const Color(0xFFE0F2FE);
+        return const Color(0xFFE6F3F7);
     }
   }
 
@@ -415,15 +415,16 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildNumpadTab() {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Center(
+        padding: const EdgeInsets.only(left: 14, right: 14, bottom: 12, top: 4),
+        child: Align(
+          alignment: Alignment.bottomCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(
-              maxWidth: 400,
-              maxHeight: 560,
+              maxWidth: 390,
+              maxHeight: 460,
             ),
             child: AspectRatio(
-              aspectRatio: 0.73,
+              aspectRatio: 0.86,
               child: Container(
                 decoration: BoxDecoration(
                   color: AppColors.housingBg,
@@ -434,7 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.12),
+                      color: Colors.black.withOpacity(0.14),
                       blurRadius: 10,
                       offset: const Offset(0, 4),
                     ),
