@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+server/.venv/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub/
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.packages
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+
+# Android
+flutter_app/android/local.properties
+flutter_app/android/.gradle/
+flutter_app/android/captures/
+flutter_app/android/gradlew
+flutter_app/android/gradlew.bat
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store

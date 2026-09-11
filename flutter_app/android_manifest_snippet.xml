@@ -1,0 +1,24 @@
+<!--
+  Tambahin baris-baris ini ke:
+  android/app/src/main/AndroidManifest.xml
+
+  1) <uses-permission> ditaruh di dalam <manifest>, SEBELUM <application>.
+  2) android:usesCleartextTraffic="true" ditaruh sebagai atribut di tag <application>.
+     Ini WAJIB — dari Android 9 (API 28) ke atas, koneksi http:// / ws:// biasa
+     (bukan https/wss) ke IP lokal akan di-block by default kalau ini gak di-set.
+-->
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <application
+        android:label="numkey_app"
+        android:usesCleartextTraffic="true"
+        ...>
+        <!-- isi application yang sudah ada, jangan dihapus -->
+    </application>
+
+</manifest>
