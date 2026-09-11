@@ -201,7 +201,7 @@ def on_disconnect():
 def on_keypress(data):
     """
     Menangani penekanan satu tombol:
-    - Numpad: '0'-'9', '.', '+', '-', '*', '/', 'enter', 'backspace', 'tab', 'esc'
+    - Numpad: '0'-'9', '.', '+', '-', '*', '/', '%', 'enter', 'backspace', 'del', 'tab', 'esc'
     - Media: 'volumeup', 'volumedown', 'volumemute', 'playpause', 'prevtrack', 'nexttrack'
     - Navigasi: 'up', 'down', 'left', 'right', 'pageup', 'pagedown', 'home', 'end', 'space', 'f5'
     """
@@ -210,7 +210,15 @@ def on_keypress(data):
         return
     print(f"[Tombol] Tekan: {key}")
     try:
-        pyautogui.press(key)
+        if key == '%':
+            try:
+                pyautogui.press('%')
+            except Exception:
+                pyautogui.hotkey('shift', '5')
+        elif key == 'del':
+            pyautogui.press('backspace')
+        else:
+            pyautogui.press(key)
     except Exception as e:
         print(f"[Tombol] Gagal menekan '{key}': {e}")
 

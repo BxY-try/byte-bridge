@@ -11,18 +11,25 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <style>
     :root {
-      --bg-primary: #0b0f19;
-      --bg-secondary: #131b2e;
-      --bg-card: #1c2640;
-      --accent: #6366f1;
-      --accent-hover: #4f46e5;
-      --accent-glow: rgba(99, 102, 241, 0.4);
-      --text-primary: #f8fafc;
-      --text-secondary: #94a3b8;
-      --success: #10b981;
-      --warning: #f59e0b;
-      --danger: #ef4444;
-      --border: #2e3c5d;
+      --bg-primary: #ECEFF2;
+      --bg-secondary: #F6F8FA;
+      --bg-card: #FFFFFF;
+      --bg-housing: #676B72;
+      --border-dark: #282A2E;
+      --key-num: #E8F1F6;
+      --key-op: #BCE0EA;
+      --key-del: #D66262;
+      --key-enter: #62AD71;
+      --text-dark: #1B1E22;
+      --text-primary: #1B1E22;
+      --text-secondary: #5A606A;
+      --accent: #BCE0EA;
+      --accent-hover: #9CD0DE;
+      --accent-glow: rgba(188, 224, 234, 0.4);
+      --success: #62AD71;
+      --warning: #F59E0B;
+      --danger: #D66262;
+      --border: #D8DDE3;
     }
 
     * {
@@ -71,9 +78,7 @@
       font-size: 1.15rem;
       font-weight: 700;
       letter-spacing: -0.5px;
-      background: linear-gradient(135deg, #a5b4fc, #c084fc);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: var(--text-dark);
     }
 
     .status-badge {
@@ -84,8 +89,9 @@
       border-radius: 9999px;
       font-size: 0.75rem;
       font-weight: 600;
-      background: rgba(0, 0, 0, 0.3);
-      border: 1px solid var(--border);
+      background: #e0f2fe;
+      color: #0369a1;
+      border: 1px solid #7dd3fc;
     }
 
     .status-dot {
@@ -93,17 +99,26 @@
       height: 8px;
       border-radius: 50%;
       background-color: var(--warning);
-      box-shadow: 0 0 8px var(--warning);
+    }
+
+    .status-badge.connected {
+      background: #d7eedd;
+      color: #1e4627;
+      border-color: #62ad71;
     }
 
     .status-badge.connected .status-dot {
-      background-color: var(--success);
-      box-shadow: 0 0 8px var(--success);
+      background-color: #2e7d32;
+    }
+
+    .status-badge.disconnected {
+      background: #fed7d7;
+      color: #742a2a;
+      border-color: #d66262;
     }
 
     .status-badge.disconnected .status-dot {
-      background-color: var(--danger);
-      box-shadow: 0 0 8px var(--danger);
+      background-color: #e53e3e;
     }
 
     /* Main Container */
@@ -127,56 +142,73 @@
     }
 
     /* Tab 1: Numpad Grid */
+    .numpad-wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex: 1;
+      width: 100%;
+      padding: 4px;
+    }
+
+    .numpad-housing {
+      background: var(--bg-housing);
+      border: 2.4px solid var(--border-dark);
+      border-radius: 20px;
+      padding: 6px;
+      max-width: 390px;
+      width: 100%;
+      aspect-ratio: 0.73;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.14);
+      display: flex;
+    }
+
     .numpad-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      grid-gap: 8px;
+      grid-template-rows: repeat(5, 1fr);
+      grid-gap: 6px;
       flex: 1;
       height: 100%;
     }
 
     .key-btn {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      color: var(--text-primary);
-      font-size: 1.4rem;
+      border: 1.8px solid var(--border-dark);
+      border-radius: 11px;
+      font-family: inherit;
+      font-size: 1.5rem;
       font-weight: 600;
+      color: var(--text-dark);
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: all 0.08s ease;
-      box-shadow: 0 3px 6px rgba(0,0,0,0.2);
+      user-select: none;
+      transition: transform 0.06s ease, filter 0.06s ease;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
 
     .key-btn:active {
-      transform: scale(0.94);
-      background: var(--accent);
-      border-color: var(--accent);
-      box-shadow: 0 0 16px var(--accent-glow);
+      transform: scale(0.95);
+      filter: brightness(0.92);
     }
 
-    .key-btn.fn {
-      background: #182239;
-      color: var(--text-secondary);
-      font-size: 0.95rem;
+    .key-btn.num {
+      background: var(--key-num);
     }
 
-    .key-btn.accent {
-      background: linear-gradient(135deg, #4f46e5, #7c3aed);
-      border: none;
-      color: white;
-      box-shadow: 0 4px 14px var(--accent-glow);
+    .key-btn.op {
+      background: var(--key-op);
     }
 
-    .key-btn.accent:active {
-      transform: scale(0.94);
-      filter: brightness(1.2);
+    .key-btn.del {
+      background: var(--key-del);
+      font-size: 1.25rem;
     }
 
-    .span-2 {
-      grid-column: span 2;
+    .key-btn.enter {
+      background: var(--key-enter);
+      font-size: 1.25rem;
     }
 
     .span-row-2 {
@@ -411,7 +443,7 @@
       display: flex;
       justify-content: space-around;
       padding: 8px 4px;
-      box-shadow: 0 -4px 12px rgba(0,0,0,0.3);
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.06);
     }
 
     .nav-item {
@@ -435,8 +467,8 @@
     }
 
     .nav-item.active {
-      color: #818cf8;
-      background: rgba(99, 102, 241, 0.15);
+      color: var(--text-dark);
+      background: var(--key-op);
     }
 
     /* Modal dialog */
@@ -529,30 +561,33 @@
   <main>
     <!-- TAB 1: NUMPAD -->
     <div id="tab-numpad" class="tab-content active">
-      <div class="numpad-grid">
-        <button class="key-btn fn" onclick="sendKey('esc')">ESC</button>
-        <button class="key-btn fn" onclick="sendKey('tab')">TAB</button>
-        <button class="key-btn fn" onclick="sendKey('backspace')">⌫</button>
-        <button class="key-btn fn" onclick="sendKey('/')">/</button>
+      <div class="numpad-wrapper">
+        <div class="numpad-housing">
+          <div class="numpad-grid">
+            <button class="key-btn op" onclick="sendKey('%')">%</button>
+            <button class="key-btn op" onclick="sendKey('/')">/</button>
+            <button class="key-btn op" onclick="sendKey('*')">*</button>
+            <button class="key-btn op" onclick="sendKey('-')">-</button>
 
-        <button class="key-btn" onclick="sendKey('7')">7</button>
-        <button class="key-btn" onclick="sendKey('8')">8</button>
-        <button class="key-btn" onclick="sendKey('9')">9</button>
-        <button class="key-btn fn" onclick="sendKey('*')">×</button>
+            <button class="key-btn num" onclick="sendKey('7')">7</button>
+            <button class="key-btn num" onclick="sendKey('8')">8</button>
+            <button class="key-btn num" onclick="sendKey('9')">9</button>
+            <button class="key-btn op span-row-2" onclick="sendKey('+')">+</button>
 
-        <button class="key-btn" onclick="sendKey('4')">4</button>
-        <button class="key-btn" onclick="sendKey('5')">5</button>
-        <button class="key-btn" onclick="sendKey('6')">6</button>
-        <button class="key-btn fn" onclick="sendKey('-')">−</button>
+            <button class="key-btn num" onclick="sendKey('4')">4</button>
+            <button class="key-btn num" onclick="sendKey('5')">5</button>
+            <button class="key-btn num" onclick="sendKey('6')">6</button>
 
-        <button class="key-btn" onclick="sendKey('1')">1</button>
-        <button class="key-btn" onclick="sendKey('2')">2</button>
-        <button class="key-btn" onclick="sendKey('3')">3</button>
-        <button class="key-btn fn" onclick="sendKey('+')">+</button>
+            <button class="key-btn num" onclick="sendKey('1')">1</button>
+            <button class="key-btn num" onclick="sendKey('2')">2</button>
+            <button class="key-btn num" onclick="sendKey('3')">3</button>
+            <button class="key-btn enter span-row-2" onclick="sendKey('enter')">Enter</button>
 
-        <button class="key-btn span-2" onclick="sendKey('0')">0</button>
-        <button class="key-btn" onclick="sendKey('.')">.</button>
-        <button class="key-btn accent" onclick="sendKey('enter')">ENTER</button>
+            <button class="key-btn num" onclick="sendKey('0')">0</button>
+            <button class="key-btn num" onclick="sendKey('.')">.</button>
+            <button class="key-btn del" onmousedown="startDeleteRepeating()" onmouseup="stopDeleteRepeating()" onmouseleave="stopDeleteRepeating()" ontouchstart="startDeleteRepeating(event)" ontouchend="stopDeleteRepeating()">Del</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -766,6 +801,27 @@
       if (socket && socket.connected) {
         socket.emit('keypress', { key: key });
       }
+    }
+
+    let deleteTimer = null;
+    let deleteRepeatTimer = null;
+
+    function startDeleteRepeating(e) {
+      if (e && e.cancelable) e.preventDefault();
+      sendKey('backspace');
+      stopDeleteRepeating();
+      deleteTimer = setTimeout(() => {
+        deleteRepeatTimer = setInterval(() => {
+          sendKey('backspace');
+        }, 65);
+      }, 350);
+    }
+
+    function stopDeleteRepeating() {
+      if (deleteTimer) clearTimeout(deleteTimer);
+      deleteTimer = null;
+      if (deleteRepeatTimer) clearInterval(deleteRepeatTimer);
+      deleteRepeatTimer = null;
     }
 
     function sendHotkey(keys) {

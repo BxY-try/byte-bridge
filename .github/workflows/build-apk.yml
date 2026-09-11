@@ -3,9 +3,14 @@ name: Build ByteBridge Android APK
 on:
   push:
     branches: [ main, master ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -55,3 +60,20 @@ jobs:
         with:
           name: ByteBridge-Release-APK
           path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.2' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'ByteBridge v1.0.2' }}
+          body: |
+            ### Pembaruan ByteBridge v1.0.2
+            - Palet warna baru sesuai referensi gambar (slate grey, pale icy blue, soft cyan, coral red Del, sage green Enter)
+            - Redesain layout Numpad 4x5 dengan tombol `+` dan `Enter` vertikal 2 baris
+            - Tombol Del dengan dukungan rapid backspace (tahan tombol untuk hapus berulang)
+            - Menghilangkan tombol ESC, TAB, dan navigasi pada Numpad
+            - Palet warna global selaras pada seluruh tab (Navigasi, Media, Pintasan) dan Web App
+          files: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

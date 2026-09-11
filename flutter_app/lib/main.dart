@@ -9,6 +9,18 @@ void main() {
   runApp(const ByteBridgeApp());
 }
 
+/// Palet warna selaras dengan referensi desain numpad
+class AppColors {
+  static const Color scaffoldBg = Color(0xFFECEFF2);
+  static const Color housingBg = Color(0xFF676B72);
+  static const Color borderDark = Color(0xFF282A2E);
+  static const Color keyNumber = Color(0xFFE8F1F6);
+  static const Color keyOperator = Color(0xFFBCE0EA);
+  static const Color keyDel = Color(0xFFD66363);
+  static const Color keyEnter = Color(0xFF62AD71);
+  static const Color textDark = Color(0xFF1B1E22);
+}
+
 class ByteBridgeApp extends StatelessWidget {
   const ByteBridgeApp({super.key});
 
@@ -18,11 +30,15 @@ class ByteBridgeApp extends StatelessWidget {
       title: 'ByteBridge',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorSchemeSeed: Colors.indigo,
         useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0B0F19),
-        cardColor: const Color(0xFF1C2640),
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: AppColors.scaffoldBg,
+        cardColor: Colors.white,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: AppColors.keyOperator,
+          brightness: Brightness.light,
+          surface: AppColors.scaffoldBg,
+        ),
       ),
       home: const HomeScreen(),
     );
@@ -31,7 +47,7 @@ class ByteBridgeApp extends StatelessWidget {
 
 enum ConnState { discovering, connecting, connected, disconnected, failed }
 
-enum _KeyType { number, operator, function, delete, accent }
+enum _KeyType { number, operator, del, enter, function }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -90,24 +106,48 @@ class _HomeScreenState extends State<HomeScreen> {
     final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Input IP Server Manual'),
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppColors.borderDark, width: 1.8),
+        ),
+        title: const Text(
+          'Input IP Server Manual',
+          style: TextStyle(color: AppColors.textDark, fontWeight: FontWeight.bold),
+        ),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(
+          style: const TextStyle(color: AppColors.textDark),
+          decoration: InputDecoration(
             hintText: '192.168.1.5',
             labelText: 'Alamat IP PC',
-            border: OutlineInputBorder(),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: AppColors.borderDark),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: AppColors.housingBg, width: 2),
+            ),
           ),
           keyboardType: TextInputType.datetime,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
+            child: const Text('Batal', style: TextStyle(color: Color(0xFF6B7280))),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.keyEnter,
+              foregroundColor: AppColors.textDark,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: const BorderSide(color: AppColors.borderDark, width: 1.5),
+              ),
+            ),
             onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Hubungkan'),
+            child: const Text('Hubungkan', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -199,16 +239,55 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Color get _statusColor {
+  Color get _statusBgColor {
     switch (_state) {
       case ConnState.connected:
-        return Colors.greenAccent;
+        return const Color(0xFFD7EEDD);
       case ConnState.failed:
-        return Colors.redAccent;
+        return const Color(0xFFFED7D7);
       case ConnState.disconnected:
-        return Colors.orangeAccent;
+        return const Color(0xFFFEEBC8);
       default:
-        return Colors.amberAccent;
+        return const Color(0xFFE0F2FE);
+    }
+  }
+
+  Color get _statusBorderColor {
+    switch (_state) {
+      case ConnState.connected:
+        return AppColors.keyEnter;
+      case ConnState.failed:
+        return AppColors.keyDel;
+      case ConnState.disconnected:
+        return const Color(0xFFF6AD55);
+      default:
+        return const Color(0xFF7DD3FC);
+    }
+  }
+
+  Color get _statusTextColor {
+    switch (_state) {
+      case ConnState.connected:
+        return const Color(0xFF1E4627);
+      case ConnState.failed:
+        return const Color(0xFF742A2A);
+      case ConnState.disconnected:
+        return const Color(0xFF7B341E);
+      default:
+        return const Color(0xFF075985);
+    }
+  }
+
+  Color get _statusDotColor {
+    switch (_state) {
+      case ConnState.connected:
+        return const Color(0xFF2E7D32);
+      case ConnState.failed:
+        return const Color(0xFFE53E3E);
+      case ConnState.disconnected:
+        return const Color(0xFFDD6B20);
+      default:
+        return const Color(0xFF0284C7);
     }
   }
 
@@ -218,39 +297,55 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text(
           'ByteBridge',
-          style: TextStyle(fontWeight: FontWeight.bold),
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: AppColors.textDark,
+          ),
         ),
-        backgroundColor: const Color(0xFF131B2E),
+        backgroundColor: AppColors.scaffoldBg,
         elevation: 0,
+        scrolledUnderElevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh, color: AppColors.textDark),
             onPressed: _startDiscovery,
             tooltip: 'Cari ulang server',
           ),
           IconButton(
-            icon: const Icon(Icons.edit),
+            icon: const Icon(Icons.edit, color: AppColors.textDark),
             onPressed: _showManualIpDialog,
             tooltip: 'Input IP manual',
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1.0),
+          child: Container(
+            color: const Color(0xFFD8DDE3),
+            height: 1.0,
+          ),
+        ),
       ),
       body: Column(
         children: [
           // Connection Status Bar
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-            color: _statusColor.withOpacity(0.12),
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            decoration: BoxDecoration(
+              color: _statusBgColor,
+              border: Border(
+                bottom: BorderSide(color: _statusBorderColor.withOpacity(0.5), width: 1.0),
+              ),
+            ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.circle, size: 10, color: _statusColor),
+                Icon(Icons.circle, size: 9, color: _statusDotColor),
                 const SizedBox(width: 8),
                 Text(
                   _statusText,
                   style: TextStyle(
-                    color: _statusColor,
+                    color: _statusTextColor,
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
                   ),
@@ -272,120 +367,174 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentTabIndex,
-        onDestinationSelected: (idx) {
-          HapticFeedback.selectionClick();
-          _stopDeleteRepeating();
-          _stopScrollRepeating();
-          setState(() => _currentTabIndex = idx);
-        },
-        backgroundColor: const Color(0xFF131B2E),
-        indicatorColor: Colors.indigo.withOpacity(0.4),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.dialpad),
-            label: 'Numpad',
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          border: Border(
+            top: BorderSide(color: Color(0xFFD8DDE3), width: 1.0),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.navigation),
-            label: 'Navigasi',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.music_note),
-            label: 'Media',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bolt),
-            label: 'Pintasan',
-          ),
-        ],
+        ),
+        child: NavigationBar(
+          selectedIndex: _currentTabIndex,
+          onDestinationSelected: (idx) {
+            HapticFeedback.selectionClick();
+            _stopDeleteRepeating();
+            _stopScrollRepeating();
+            setState(() => _currentTabIndex = idx);
+          },
+          backgroundColor: const Color(0xFFF2F5F8),
+          indicatorColor: AppColors.keyOperator,
+          surfaceTintColor: Colors.transparent,
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.dialpad, color: Color(0xFF5A606A)),
+              selectedIcon: Icon(Icons.dialpad, color: AppColors.textDark),
+              label: 'Numpad',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.navigation, color: Color(0xFF5A606A)),
+              selectedIcon: Icon(Icons.navigation, color: AppColors.textDark),
+              label: 'Navigasi',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.music_note, color: Color(0xFF5A606A)),
+              selectedIcon: Icon(Icons.music_note, color: AppColors.textDark),
+              label: 'Media',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.bolt, color: Color(0xFF5A606A)),
+              selectedIcon: Icon(Icons.bolt, color: AppColors.textDark),
+              label: 'Pintasan',
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // ---------- TAB 1: NUMPAD ----------
+  // ---------- TAB 1: NUMPAD (SESUAI GAMBAR REFERENSI) ----------
   Widget _buildNumpadTab() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      child: Column(
-        children: [
-          // Top utility row: ESC, TAB, Nav arrows, Backspace
-          Expanded(
-            flex: 1,
-            child: Row(
-              children: [
-                Expanded(child: _buildCalcKey('esc', label: 'ESC', type: _KeyType.function)),
-                Expanded(child: _buildCalcKey('tab', label: 'TAB', type: _KeyType.function)),
-                Expanded(child: _buildCalcKey('left', icon: Icons.chevron_left, type: _KeyType.function)),
-                Expanded(child: _buildCalcKey('up', icon: Icons.expand_less, type: _KeyType.function)),
-                Expanded(child: _buildCalcKey('down', icon: Icons.expand_more, type: _KeyType.function)),
-                Expanded(child: _buildCalcKey('right', icon: Icons.chevron_right, type: _KeyType.function)),
-                Expanded(child: _buildCalcKey('backspace', icon: Icons.backspace_outlined, type: _KeyType.delete)),
-              ],
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: 400,
+              maxHeight: 560,
+            ),
+            child: AspectRatio(
+              aspectRatio: 0.73,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.housingBg,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: AppColors.borderDark,
+                    width: 2.4,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.12),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(5.0),
+                child: Column(
+                  children: [
+                    // Baris 1: %, /, *, -
+                    Expanded(
+                      flex: 1,
+                      child: Row(
+                        children: [
+                          Expanded(child: _buildCalcKey('%', label: '%', type: _KeyType.operator)),
+                          Expanded(child: _buildCalcKey('/', label: '/', type: _KeyType.operator)),
+                          Expanded(child: _buildCalcKey('*', label: '*', type: _KeyType.operator)),
+                          Expanded(child: _buildCalcKey('-', label: '-', type: _KeyType.operator)),
+                        ],
+                      ),
+                    ),
+                    // Baris 2 sampai 5: 3 kolom angka di kiri, 1 kolom (+ dan Enter) di kanan
+                    Expanded(
+                      flex: 4,
+                      child: Row(
+                        children: [
+                          // 3 Kolom Kiri: 789, 456, 123, 0 . Del
+                          Expanded(
+                            flex: 3,
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Expanded(child: _buildCalcKey('7')),
+                                      Expanded(child: _buildCalcKey('8')),
+                                      Expanded(child: _buildCalcKey('9')),
+                                    ],
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Expanded(child: _buildCalcKey('4')),
+                                      Expanded(child: _buildCalcKey('5')),
+                                      Expanded(child: _buildCalcKey('6')),
+                                    ],
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Expanded(child: _buildCalcKey('1')),
+                                      Expanded(child: _buildCalcKey('2')),
+                                      Expanded(child: _buildCalcKey('3')),
+                                    ],
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Expanded(child: _buildCalcKey('0')),
+                                      Expanded(child: _buildCalcKey('.', label: '.')),
+                                      Expanded(
+                                        child: _buildCalcKey(
+                                          'backspace',
+                                          label: 'Del',
+                                          type: _KeyType.del,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          // 1 Kolom Kanan: + (tinggi 2 baris) dan Enter (tinggi 2 baris)
+                          Expanded(
+                            flex: 1,
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  flex: 1,
+                                  child: _buildCalcKey('+', label: '+', type: _KeyType.operator),
+                                ),
+                                Expanded(
+                                  flex: 1,
+                                  child: _buildCalcKey('enter', label: 'Enter', type: _KeyType.enter),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
-          // Number grid + operators
-          Expanded(
-            flex: 4,
-            child: Row(
-              children: [
-                // Number grid (3 cols)
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: Row(children: [
-                          Expanded(child: _buildCalcKey('7')),
-                          Expanded(child: _buildCalcKey('8')),
-                          Expanded(child: _buildCalcKey('9')),
-                        ]),
-                      ),
-                      Expanded(
-                        child: Row(children: [
-                          Expanded(child: _buildCalcKey('4')),
-                          Expanded(child: _buildCalcKey('5')),
-                          Expanded(child: _buildCalcKey('6')),
-                        ]),
-                      ),
-                      Expanded(
-                        child: Row(children: [
-                          Expanded(child: _buildCalcKey('1')),
-                          Expanded(child: _buildCalcKey('2')),
-                          Expanded(child: _buildCalcKey('3')),
-                        ]),
-                      ),
-                      Expanded(
-                        child: Row(children: [
-                          Expanded(flex: 2, child: _buildCalcKey('0')),
-                          Expanded(child: _buildCalcKey('.', label: '.')),
-                        ]),
-                      ),
-                    ],
-                  ),
-                ),
-                // Operator column (right side)
-                Expanded(
-                  flex: 1,
-                  child: Column(
-                    children: [
-                      Expanded(child: _buildCalcKey('/', label: '\u00F7', type: _KeyType.operator)),
-                      Expanded(child: _buildCalcKey('*', label: '\u00D7', type: _KeyType.operator)),
-                      Expanded(child: _buildCalcKey('-', label: '\u2212', type: _KeyType.operator)),
-                      Expanded(child: _buildCalcKey('+', label: '+', type: _KeyType.operator)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Enter bar at the bottom
-          Expanded(
-            flex: 1,
-            child: _buildCalcKey('enter', label: 'ENTER', type: _KeyType.accent),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -397,147 +546,73 @@ class _HomeScreenState extends State<HomeScreen> {
     _KeyType type = _KeyType.number,
   }) {
     Color bgColor;
-    Color fgColor = Colors.white;
     double fontSize = 24;
-    double iconSize = 24;
 
     switch (type) {
       case _KeyType.number:
-        bgColor = const Color(0xFF1E2A45);
-        fontSize = 26;
+        bgColor = AppColors.keyNumber;
+        fontSize = 24;
         break;
       case _KeyType.operator:
-        bgColor = const Color(0xFF2A1E45);
-        fgColor = const Color(0xFFB388FF);
-        fontSize = 28;
+        bgColor = AppColors.keyOperator;
+        fontSize = 24;
+        break;
+      case _KeyType.del:
+        bgColor = AppColors.keyDel;
+        fontSize = 20;
+        break;
+      case _KeyType.enter:
+        bgColor = AppColors.keyEnter;
+        fontSize = 20;
         break;
       case _KeyType.function:
-        bgColor = const Color(0xFF151D30);
-        fgColor = const Color(0xFF8899BB);
+        bgColor = AppColors.keyOperator;
         fontSize = 14;
-        iconSize = 22;
-        break;
-      case _KeyType.delete:
-        bgColor = const Color(0xFF3D1A1A);
-        fgColor = const Color(0xFFFF8A80);
-        iconSize = 22;
-        break;
-      case _KeyType.accent:
-        bgColor = const Color(0xFF3949AB);
-        fontSize = 18;
         break;
     }
 
-    final isBackspace = key == 'backspace' || type == _KeyType.delete;
+    final isDel = key == 'backspace' || key == 'del' || type == _KeyType.del;
 
     return Padding(
-      padding: const EdgeInsets.all(2.5),
-      child: Material(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () {
-            if (!isBackspace) {
-              _sendKey(key);
-            }
-          },
-          onTapDown: isBackspace ? (_) => _startDeleteRepeating() : null,
-          onTapUp: isBackspace ? (_) => _stopDeleteRepeating() : null,
-          onTapCancel: isBackspace ? () => _stopDeleteRepeating() : null,
-          splashColor: isBackspace
-              ? Colors.redAccent.withOpacity(0.3)
-              : Colors.white.withOpacity(0.15),
-          highlightColor: Colors.white.withOpacity(0.08),
-          child: Center(
-            child: icon != null
-                ? Icon(icon, size: iconSize, color: fgColor)
-                : Text(
-                    label ?? key,
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: FontWeight.w600,
-                      color: fgColor,
-                    ),
-                  ),
+      padding: const EdgeInsets.all(3.0),
+      child: Container(
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: AppColors.borderDark,
+            width: 1.8,
           ),
         ),
-      ),
-    );
-  }
-
-
-  // ---------- TAB 3: MEDIA ----------
-  Widget _buildMediaTab() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Volume Card
-            Card(
-              color: const Color(0xFF131B2E),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    const Text('VOLUME PC', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildCircleBtn(Icons.volume_down, 'volumedown'),
-                        _buildCircleBtn(Icons.volume_off, 'volumemute'),
-                        _buildCircleBtn(Icons.volume_up, 'volumeup'),
-                      ],
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () {
+              if (!isDel) {
+                _sendKey(key);
+              }
+            },
+            onTapDown: isDel ? (_) => _startDeleteRepeating() : null,
+            onTapUp: isDel ? (_) => _stopDeleteRepeating() : null,
+            onTapCancel: isDel ? () => _stopDeleteRepeating() : null,
+            splashColor: Colors.black.withOpacity(0.12),
+            highlightColor: Colors.black.withOpacity(0.06),
+            child: Center(
+              child: icon != null
+                  ? Icon(icon, size: 22, color: AppColors.textDark)
+                  : Text(
+                      label ?? key,
+                      style: TextStyle(
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textDark,
+                      ),
                     ),
-                  ],
-                ),
-              ),
             ),
-            const SizedBox(height: 24),
-            // Music Card
-            Card(
-              color: const Color(0xFF131B2E),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    const Text('KONTROL PEMUTAR MUSIK', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildCircleBtn(Icons.skip_previous, 'prevtrack'),
-                        _buildCircleBtn(Icons.play_arrow, 'playpause', isLarge: true),
-                        _buildCircleBtn(Icons.skip_next, 'nexttrack'),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildCircleBtn(IconData icon, String key, {bool isLarge = false}) {
-    return InkWell(
-      onTap: () => _sendKey(key),
-      borderRadius: BorderRadius.circular(40),
-      child: Container(
-        width: isLarge ? 72 : 56,
-        height: isLarge ? 72 : 56,
-        decoration: BoxDecoration(
-          color: isLarge ? Colors.indigoAccent : const Color(0xFF1C2640),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, size: isLarge ? 36 : 26, color: Colors.white),
       ),
     );
   }
@@ -571,9 +646,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   flex: 5,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF131B2E),
+                      color: AppColors.housingBg,
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: const Color(0xFF1E2A45)),
+                      border: Border.all(color: AppColors.borderDark, width: 2.0),
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
                     child: Column(
@@ -582,7 +657,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         const Text(
                           'NAVIGASI / D-PAD',
                           style: TextStyle(
-                            color: Colors.grey,
+                            color: Colors.white,
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 1.0,
@@ -614,9 +689,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   flex: 4,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF131B2E),
+                      color: AppColors.housingBg,
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: const Color(0xFF1E2A45)),
+                      border: Border.all(color: AppColors.borderDark, width: 2.0),
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                     child: Column(
@@ -624,12 +699,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.swap_vert, size: 14, color: Colors.indigoAccent),
+                            Icon(Icons.swap_vert, size: 14, color: Colors.white),
                             SizedBox(width: 4),
                             Text(
                               'SCROLL PC',
                               style: TextStyle(
-                                color: Colors.grey,
+                                color: Colors.white,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                                 letterSpacing: 1.0,
@@ -677,40 +752,54 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildDpadBtn(IconData icon, String key) {
-    return Material(
-      color: const Color(0xFF1C2640),
-      borderRadius: BorderRadius.circular(14),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => _sendKey(key),
-        splashColor: Colors.indigoAccent.withOpacity(0.3),
-        child: SizedBox(
-          width: 52,
-          height: 52,
-          child: Icon(icon, size: 32, color: Colors.white),
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.keyNumber,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.borderDark, width: 1.6),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(11),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _sendKey(key),
+          splashColor: Colors.black12,
+          child: SizedBox(
+            width: 52,
+            height: 52,
+            child: Icon(icon, size: 32, color: AppColors.textDark),
+          ),
         ),
       ),
     );
   }
 
   Widget _buildDpadCenterOk() {
-    return Material(
-      color: Colors.indigoAccent,
-      borderRadius: BorderRadius.circular(14),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => _sendKey('enter'),
-        splashColor: Colors.white.withOpacity(0.3),
-        child: const SizedBox(
-          width: 52,
-          height: 52,
-          child: Center(
-            child: Text(
-              'OK',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-                color: Colors.white,
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.keyEnter,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.borderDark, width: 1.8),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(11),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _sendKey('enter'),
+          splashColor: Colors.black12,
+          child: const SizedBox(
+            width: 52,
+            height: 52,
+            child: Center(
+              child: Text(
+                'OK',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: AppColors.textDark,
+                ),
               ),
             ),
           ),
@@ -724,33 +813,40 @@ class _HomeScreenState extends State<HomeScreen> {
     required String label,
     required int dy,
   }) {
-    return Material(
-      color: const Color(0xFF1C2640),
-      borderRadius: BorderRadius.circular(12),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () {},
-        onTapDown: (_) => _startScrollRepeating(dy),
-        onTapUp: (_) => _stopScrollRepeating(),
-        onTapCancel: () => _stopScrollRepeating(),
-        splashColor: Colors.indigoAccent.withOpacity(0.3),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 9),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 18, color: Colors.indigoAccent),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 11,
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.keyOperator,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.borderDark, width: 1.6),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(11),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () {},
+          onTapDown: (_) => _startScrollRepeating(dy),
+          onTapUp: (_) => _stopScrollRepeating(),
+          onTapCancel: () => _stopScrollRepeating(),
+          splashColor: Colors.black12,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18, color: AppColors.textDark),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: AppColors.textDark,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -777,22 +873,22 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: const Color(0xFF0F1523),
+          color: AppColors.keyNumber,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF1E2A45)),
+          border: Border.all(color: AppColors.borderDark, width: 1.6),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.unfold_more, color: Colors.indigoAccent.withOpacity(0.6), size: 28),
+            Icon(Icons.unfold_more, color: AppColors.textDark.withOpacity(0.7), size: 28),
             const SizedBox(height: 4),
             Text(
               'Geser\nScroll',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.grey.shade400,
+                color: AppColors.textDark.withOpacity(0.8),
                 fontSize: 11,
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w600,
                 height: 1.2,
               ),
             ),
@@ -803,22 +899,156 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildNavActionBtn(String label, VoidCallback onPressed) {
-    return OutlinedButton(
-      onPressed: () {
-        HapticFeedback.lightImpact();
-        onPressed();
-      },
-      style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.white,
-        backgroundColor: const Color(0xFF151D30),
-        side: const BorderSide(color: Color(0xFF2E3C5D)),
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.keyNumber,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.borderDark, width: 1.6),
       ),
-      child: Text(
-        label,
-        textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () {
+            HapticFeedback.lightImpact();
+            onPressed();
+          },
+          splashColor: Colors.black12,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textDark,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------- TAB 3: MEDIA ----------
+  Widget _buildMediaTab() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Volume Card
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.borderDark, width: 1.8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.06),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  children: [
+                    const Text(
+                      'VOLUME PC',
+                      style: TextStyle(
+                        color: Color(0xFF4B5563),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildCircleBtn(Icons.volume_down, 'volumedown'),
+                        _buildCircleBtn(Icons.volume_off, 'volumemute'),
+                        _buildCircleBtn(Icons.volume_up, 'volumeup'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              // Music Card
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.borderDark, width: 1.8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.06),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  children: [
+                    const Text(
+                      'KONTROL PEMUTAR MUSIK',
+                      style: TextStyle(
+                        color: Color(0xFF4B5563),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildCircleBtn(Icons.skip_previous, 'prevtrack'),
+                        _buildCircleBtn(Icons.play_arrow, 'playpause', isLarge: true),
+                        _buildCircleBtn(Icons.skip_next, 'nexttrack'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCircleBtn(IconData icon, String key, {bool isLarge = false}) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: AppColors.borderDark, width: isLarge ? 2.2 : 1.8),
+      ),
+      child: Material(
+        color: isLarge ? AppColors.keyEnter : AppColors.keyOperator,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _sendKey(key),
+          splashColor: Colors.black12,
+          child: SizedBox(
+            width: isLarge ? 72 : 56,
+            height: isLarge ? 72 : 56,
+            child: Icon(
+              icon,
+              size: isLarge ? 36 : 26,
+              color: AppColors.textDark,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -849,20 +1079,41 @@ class _HomeScreenState extends State<HomeScreen> {
         itemCount: shortcuts.length,
         itemBuilder: (context, idx) {
           final s = shortcuts[idx];
-          return ElevatedButton(
-            onPressed: () => _sendHotkey(s['keys'] as List<String>),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1C2640),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              padding: const EdgeInsets.all(8),
+          return Container(
+            decoration: BoxDecoration(
+              color: AppColors.keyNumber,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.borderDark, width: 1.8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-            child: Text(
-              s['label'] as String,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(13),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () => _sendHotkey(s['keys'] as List<String>),
+                splashColor: Colors.black12,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text(
+                      s['label'] as String,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           );
         },
