@@ -65,6 +65,12 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _keyboardTextController = TextEditingController();
   final FocusNode _keyboardFocusNode = FocusNode();
 
+  // Pengaturan posisi & ukuran numpad dinamis (ala Gboard)
+  double _numpadBottomOffset = 0.0; // 0 = mepet footer paling bawah
+  double _numpadScale = 1.0; // 0.75 s/d 1.15
+  double _numpadHorizontalAlign = 0.0; // -1.0 (kiri), 0.0 (tengah), 1.0 (kanan)
+  bool _isAdjustingNumpad = false;
+
   @override
   void initState() {
     super.initState();
@@ -509,136 +515,433 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------- TAB 1: NUMPAD (SESUAI GAMBAR REFERENSI + NAVIGASI ARAH) ----------
+  // ---------- TAB 1: NUMPAD (MEPET FOOTER + RESIZE/REPOSITION DINAMIS GBOARD STYLE) ----------
   Widget _buildNumpadTab() {
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.only(left: 14, right: 14, bottom: 8, top: 4),
-        child: Center(
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: SizedBox(
-              width: 380,
-              height: 520,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppColors.housingBg,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: AppColors.borderDark,
-                    width: 2.4,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.14),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+      child: Column(
+        children: [
+          // Control Panel / Tombol Pengaturan Posisi & Ukuran (Gboard Style)
+          if (_isAdjustingNumpad)
+            _buildNumpadAdjustPanel()
+          else
+            Padding(
+              padding: const EdgeInsets.only(right: 14, top: 4),
+              child: Align(
+                alignment: Alignment.topRight,
+                child: GestureDetector(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    setState(() => _isAdjustingNumpad = true);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFCBD5E1), width: 1.0),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 4,
+                          offset: const Offset(0, 1),
+                        ),
+                      ],
                     ),
-                  ],
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.tune, size: 13, color: Color(0xFF5A606A)),
+                        SizedBox(width: 4),
+                        Text(
+                          'Atur Posisi',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF5A606A),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                padding: const EdgeInsets.all(6.0),
+              ),
+            ),
+          // Area Numpad: Ditempatkan mepet ke bawah (bottom footer)
+          Expanded(
+            child: Align(
+              alignment: Alignment(_numpadHorizontalAlign, 1.0),
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 8,
+                  right: 8,
+                  bottom: _numpadBottomOffset + 2,
+                ),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Navigasi Arah Inverted-T
-                    _buildNavArrowCluster(),
-                    const SizedBox(height: 6),
-                    // Grid Numpad
-                    Expanded(
-                      child: Column(
-                        children: [
-                          // Baris 1: %, /, *, -
-                          Expanded(
-                            flex: 1,
+                    // Drag Handle saat Mode Adjust aktif
+                    if (_isAdjustingNumpad)
+                      GestureDetector(
+                        onVerticalDragUpdate: (details) {
+                          setState(() {
+                            _numpadBottomOffset = (_numpadBottomOffset - details.delta.dy).clamp(0.0, 180.0);
+                          });
+                        },
+                        child: Container(
+                          width: 380 * _numpadScale,
+                          height: 22,
+                          margin: const EdgeInsets.only(bottom: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2563EB).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFF2563EB).withOpacity(0.3), width: 1.2),
+                          ),
+                          child: const Center(
                             child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Expanded(child: _buildCalcKey('%', label: '%', type: _KeyType.operator)),
-                                Expanded(child: _buildCalcKey('/', label: '/', type: _KeyType.operator)),
-                                Expanded(child: _buildCalcKey('*', label: '*', type: _KeyType.operator)),
-                                Expanded(child: _buildCalcKey('-', label: '-', type: _KeyType.operator)),
+                                Icon(Icons.drag_handle, size: 16, color: Color(0xFF1D4ED8)),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Tahan & Geser Atas-Bawah',
+                                  style: TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF1D4ED8),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
-                          // Baris 2 sampai 5: 3 kolom angka di kiri, 1 kolom (+ dan Enter) di kanan
-                          Expanded(
-                            flex: 4,
-                            child: Row(
-                              children: [
-                                // 3 Kolom Kiri: 789, 456, 123, 0 . Del
-                                Expanded(
-                                  flex: 3,
-                                  child: Column(
-                                    children: [
-                                      Expanded(
-                                        child: Row(
-                                          children: [
-                                            Expanded(child: _buildCalcKey('7')),
-                                            Expanded(child: _buildCalcKey('8')),
-                                            Expanded(child: _buildCalcKey('9')),
-                                          ],
-                                        ),
+                        ),
+                      ),
+                    // Housing Numpad Utama
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: SizedBox(
+                        width: 380 * _numpadScale,
+                        height: 520 * _numpadScale,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: AppColors.housingBg,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: _isAdjustingNumpad ? const Color(0xFF2563EB) : AppColors.borderDark,
+                              width: _isAdjustingNumpad ? 2.8 : 2.4,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.14),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          padding: const EdgeInsets.all(6.0),
+                          child: Column(
+                            children: [
+                              // Navigasi Arah Inverted-T
+                              _buildNavArrowCluster(),
+                              const SizedBox(height: 6),
+                              // Grid Numpad
+                              Expanded(
+                                child: Column(
+                                  children: [
+                                    // Baris 1: %, /, *, -
+                                    Expanded(
+                                      flex: 1,
+                                      child: Row(
+                                        children: [
+                                          Expanded(child: _buildCalcKey('%', label: '%', type: _KeyType.operator)),
+                                          Expanded(child: _buildCalcKey('/', label: '/', type: _KeyType.operator)),
+                                          Expanded(child: _buildCalcKey('*', label: '*', type: _KeyType.operator)),
+                                          Expanded(child: _buildCalcKey('-', label: '-', type: _KeyType.operator)),
+                                        ],
                                       ),
-                                      Expanded(
-                                        child: Row(
-                                          children: [
-                                            Expanded(child: _buildCalcKey('4')),
-                                            Expanded(child: _buildCalcKey('5')),
-                                            Expanded(child: _buildCalcKey('6')),
-                                          ],
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: Row(
-                                          children: [
-                                            Expanded(child: _buildCalcKey('1')),
-                                            Expanded(child: _buildCalcKey('2')),
-                                            Expanded(child: _buildCalcKey('3')),
-                                          ],
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: Row(
-                                          children: [
-                                            Expanded(child: _buildCalcKey('0')),
-                                            Expanded(child: _buildCalcKey('.', label: '.')),
-                                            Expanded(
-                                              child: _buildCalcKey(
-                                                'backspace',
-                                                label: 'Del',
-                                                type: _KeyType.del,
-                                              ),
+                                    ),
+                                    // Baris 2 sampai 5: 3 kolom angka di kiri, 1 kolom (+ dan Enter) di kanan
+                                    Expanded(
+                                      flex: 4,
+                                      child: Row(
+                                        children: [
+                                          // 3 Kolom Kiri: 789, 456, 123, 0 . Del
+                                          Expanded(
+                                            flex: 3,
+                                            child: Column(
+                                              children: [
+                                                Expanded(
+                                                  child: Row(
+                                                    children: [
+                                                      Expanded(child: _buildCalcKey('7')),
+                                                      Expanded(child: _buildCalcKey('8')),
+                                                      Expanded(child: _buildCalcKey('9')),
+                                                    ],
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: Row(
+                                                    children: [
+                                                      Expanded(child: _buildCalcKey('4')),
+                                                      Expanded(child: _buildCalcKey('5')),
+                                                      Expanded(child: _buildCalcKey('6')),
+                                                    ],
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: Row(
+                                                    children: [
+                                                      Expanded(child: _buildCalcKey('1')),
+                                                      Expanded(child: _buildCalcKey('2')),
+                                                      Expanded(child: _buildCalcKey('3')),
+                                                    ],
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: Row(
+                                                    children: [
+                                                      Expanded(child: _buildCalcKey('0')),
+                                                      Expanded(child: _buildCalcKey('.', label: '.')),
+                                                      Expanded(
+                                                        child: _buildCalcKey(
+                                                          'backspace',
+                                                          label: 'Del',
+                                                          type: _KeyType.del,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
                                             ),
-                                          ],
-                                        ),
+                                          ),
+                                          // 1 Kolom Kanan: + dan Enter
+                                          Expanded(
+                                            flex: 1,
+                                            child: Column(
+                                              children: [
+                                                Expanded(
+                                                  flex: 1,
+                                                  child: _buildCalcKey('+', label: '+', type: _KeyType.operator),
+                                                ),
+                                                Expanded(
+                                                  flex: 1,
+                                                  child: _buildCalcKey('enter', label: 'Enter', type: _KeyType.enter),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
-                                // 1 Kolom Kanan: + (tinggi 2 baris) dan Enter (tinggi 2 baris)
-                                Expanded(
-                                  flex: 1,
-                                  child: Column(
-                                    children: [
-                                      Expanded(
-                                        flex: 1,
-                                        child: _buildCalcKey('+', label: '+', type: _KeyType.operator),
-                                      ),
-                                      Expanded(
-                                        flex: 1,
-                                        child: _buildCalcKey('enter', label: 'Enter', type: _KeyType.enter),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNumpadAdjustPanel() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.borderDark, width: 1.8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.open_with, size: 16, color: AppColors.textDark),
+              const SizedBox(width: 6),
+              const Text(
+                'Atur Posisi & Ukuran',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                  color: AppColors.textDark,
+                ),
+              ),
+              const Spacer(),
+              // Reset Mepet Bawah
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _numpadBottomOffset = 0.0;
+                    _numpadScale = 1.0;
+                    _numpadHorizontalAlign = 0.0;
+                  });
+                  HapticFeedback.selectionClick();
+                },
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  visualDensity: VisualDensity.compact,
+                ),
+                icon: const Icon(Icons.vertical_align_bottom, size: 15),
+                label: const Text('Mepet Bawah', style: TextStyle(fontSize: 11)),
+              ),
+              const SizedBox(width: 4),
+              // Tombol Selesai
+              FilledButton(
+                onPressed: () {
+                  setState(() => _isAdjustingNumpad = false);
+                  HapticFeedback.selectionClick();
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.keyEnter,
+                  foregroundColor: AppColors.textDark,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  minimumSize: Size.zero,
+                  visualDensity: VisualDensity.compact,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                child: const Text('Selesai ✓', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // Slider Posisi Vertikal
+          Row(
+            children: [
+              const SizedBox(
+                width: 76,
+                child: Text('Tinggi:', style: TextStyle(fontSize: 11, color: Color(0xFF4B5563))),
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                    activeTrackColor: AppColors.keyEnter,
+                    thumbColor: AppColors.borderDark,
+                  ),
+                  child: Slider(
+                    value: _numpadBottomOffset,
+                    min: 0.0,
+                    max: 180.0,
+                    onChanged: (val) {
+                      setState(() => _numpadBottomOffset = val);
+                    },
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 36,
+                child: Text(
+                  '${_numpadBottomOffset.round()}px',
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          // Slider Ukuran / Skala
+          Row(
+            children: [
+              const SizedBox(
+                width: 76,
+                child: Text('Ukuran:', style: TextStyle(fontSize: 11, color: Color(0xFF4B5563))),
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                    activeTrackColor: AppColors.keyOperator,
+                    thumbColor: AppColors.borderDark,
+                  ),
+                  child: Slider(
+                    value: _numpadScale,
+                    min: 0.75,
+                    max: 1.15,
+                    onChanged: (val) {
+                      setState(() => _numpadScale = val);
+                    },
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: 36,
+                child: Text(
+                  '${(_numpadScale * 100).round()}%',
+                  textAlign: TextAlign.end,
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          // Pilihan Posisi Satu Tangan (Kiri / Tengah / Kanan)
+          Row(
+            children: [
+              const SizedBox(
+                width: 76,
+                child: Text('Satu Tangan:', style: TextStyle(fontSize: 11, color: Color(0xFF4B5563))),
+              ),
+              Expanded(
+                child: Row(
+                  children: [
+                    Expanded(child: _buildAlignBtn('Kiri', -1.0)),
+                    const SizedBox(width: 6),
+                    Expanded(child: _buildAlignBtn('Tengah', 0.0)),
+                    const SizedBox(width: 6),
+                    Expanded(child: _buildAlignBtn('Kanan', 1.0)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAlignBtn(String label, double alignVal) {
+    final bool isSelected = _numpadHorizontalAlign == alignVal;
+    return InkWell(
+      onTap: () {
+        setState(() => _numpadHorizontalAlign = alignVal);
+        HapticFeedback.selectionClick();
+      },
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.keyOperator : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected ? AppColors.borderDark : const Color(0xFFCBD5E1),
+            width: isSelected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+            color: AppColors.textDark,
           ),
         ),
       ),
