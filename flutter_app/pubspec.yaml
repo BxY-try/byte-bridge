@@ -1,5 +1,5 @@
-name: numkey_app
-description: Remote numpad controller via WiFi
+name: byte_bridge
+description: ByteBridge - Remote keyboard controller via WiFi
 publish_to: 'none'
 version: 1.0.0+1
 

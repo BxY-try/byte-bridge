@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'discovery_service.dart';
@@ -29,6 +30,8 @@ class ByteBridgeApp extends StatelessWidget {
 }
 
 enum ConnState { discovering, connecting, connected, disconnected, failed }
+
+enum _KeyType { number, operator, function, delete, accent }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -114,6 +117,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Timer? _deleteInitialTimer;
+  Timer? _deleteRepeatTimer;
+  Timer? _scrollInitialTimer;
+  Timer? _scrollRepeatTimer;
+  double _scrollDragAccumulator = 0;
+
   void _sendKey(String key) {
     HapticFeedback.lightImpact();
     _socketService.sendKey(key);
@@ -124,8 +133,53 @@ class _HomeScreenState extends State<HomeScreen> {
     _socketService.sendHotkey(keys);
   }
 
+  void _sendScroll(int dy) {
+    HapticFeedback.selectionClick();
+    _socketService.sendMouseScroll(dy);
+  }
+
+  void _startDeleteRepeating() {
+    _sendKey('backspace');
+    _deleteInitialTimer?.cancel();
+    _deleteRepeatTimer?.cancel();
+    _deleteInitialTimer = Timer(const Duration(milliseconds: 350), () {
+      _deleteRepeatTimer = Timer.periodic(const Duration(milliseconds: 65), (_) {
+        _sendKey('backspace');
+      });
+    });
+  }
+
+  void _stopDeleteRepeating() {
+    _deleteInitialTimer?.cancel();
+    _deleteInitialTimer = null;
+    _deleteRepeatTimer?.cancel();
+    _deleteRepeatTimer = null;
+  }
+
+  void _startScrollRepeating(int dy) {
+    _sendScroll(dy);
+    _scrollInitialTimer?.cancel();
+    _scrollRepeatTimer?.cancel();
+    _scrollInitialTimer = Timer(const Duration(milliseconds: 300), () {
+      _scrollRepeatTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+        _sendScroll(dy);
+      });
+    });
+  }
+
+  void _stopScrollRepeating() {
+    _scrollInitialTimer?.cancel();
+    _scrollInitialTimer = null;
+    _scrollRepeatTimer?.cancel();
+    _scrollRepeatTimer = null;
+  }
+
   @override
   void dispose() {
+    _deleteInitialTimer?.cancel();
+    _deleteRepeatTimer?.cancel();
+    _scrollInitialTimer?.cancel();
+    _scrollRepeatTimer?.cancel();
     _socketService.dispose();
     super.dispose();
   }
@@ -210,8 +264,8 @@ class _HomeScreenState extends State<HomeScreen> {
               index: _currentTabIndex,
               children: [
                 _buildNumpadTab(),
-                _buildMediaTab(),
                 _buildNavTab(),
+                _buildMediaTab(),
                 _buildShortcutsTab(),
               ],
             ),
@@ -222,6 +276,8 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedIndex: _currentTabIndex,
         onDestinationSelected: (idx) {
           HapticFeedback.selectionClick();
+          _stopDeleteRepeating();
+          _stopScrollRepeating();
           setState(() => _currentTabIndex = idx);
         },
         backgroundColor: const Color(0xFF131B2E),
@@ -232,12 +288,12 @@ class _HomeScreenState extends State<HomeScreen> {
             label: 'Numpad',
           ),
           NavigationDestination(
-            icon: Icon(Icons.music_note),
-            label: 'Media',
-          ),
-          NavigationDestination(
             icon: Icon(Icons.navigation),
             label: 'Navigasi',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.music_note),
+            label: 'Media',
           ),
           NavigationDestination(
             icon: Icon(Icons.bolt),
@@ -250,79 +306,168 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ---------- TAB 1: NUMPAD ----------
   Widget _buildNumpadTab() {
-    const rows = [
-      ['esc', 'tab', 'backspace', '/'],
-      ['7', '8', '9', '*'],
-      ['4', '5', '6', '-'],
-      ['1', '2', '3', '+'],
-    ];
-
     return Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       child: Column(
         children: [
-          for (final row in rows)
-            Expanded(
-              child: Row(
-                children: [
-                  for (final key in row)
-                    Expanded(child: _buildKeyButton(key)),
-                ],
-              ),
-            ),
-          // Bottom row: 0 (span 2), ., enter
+          // Top utility row: ESC, TAB, Nav arrows, Backspace
           Expanded(
+            flex: 1,
             child: Row(
               children: [
-                Expanded(flex: 2, child: _buildKeyButton('0')),
-                Expanded(child: _buildKeyButton('.')),
+                Expanded(child: _buildCalcKey('esc', label: 'ESC', type: _KeyType.function)),
+                Expanded(child: _buildCalcKey('tab', label: 'TAB', type: _KeyType.function)),
+                Expanded(child: _buildCalcKey('left', icon: Icons.chevron_left, type: _KeyType.function)),
+                Expanded(child: _buildCalcKey('up', icon: Icons.expand_less, type: _KeyType.function)),
+                Expanded(child: _buildCalcKey('down', icon: Icons.expand_more, type: _KeyType.function)),
+                Expanded(child: _buildCalcKey('right', icon: Icons.chevron_right, type: _KeyType.function)),
+                Expanded(child: _buildCalcKey('backspace', icon: Icons.backspace_outlined, type: _KeyType.delete)),
+              ],
+            ),
+          ),
+          // Number grid + operators
+          Expanded(
+            flex: 4,
+            child: Row(
+              children: [
+                // Number grid (3 cols)
                 Expanded(
-                  child: _buildKeyButton(
-                    'enter',
-                    label: 'ENTER',
-                    isAccent: true,
+                  flex: 3,
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: Row(children: [
+                          Expanded(child: _buildCalcKey('7')),
+                          Expanded(child: _buildCalcKey('8')),
+                          Expanded(child: _buildCalcKey('9')),
+                        ]),
+                      ),
+                      Expanded(
+                        child: Row(children: [
+                          Expanded(child: _buildCalcKey('4')),
+                          Expanded(child: _buildCalcKey('5')),
+                          Expanded(child: _buildCalcKey('6')),
+                        ]),
+                      ),
+                      Expanded(
+                        child: Row(children: [
+                          Expanded(child: _buildCalcKey('1')),
+                          Expanded(child: _buildCalcKey('2')),
+                          Expanded(child: _buildCalcKey('3')),
+                        ]),
+                      ),
+                      Expanded(
+                        child: Row(children: [
+                          Expanded(flex: 2, child: _buildCalcKey('0')),
+                          Expanded(child: _buildCalcKey('.', label: '.')),
+                        ]),
+                      ),
+                    ],
+                  ),
+                ),
+                // Operator column (right side)
+                Expanded(
+                  flex: 1,
+                  child: Column(
+                    children: [
+                      Expanded(child: _buildCalcKey('/', label: '\u00F7', type: _KeyType.operator)),
+                      Expanded(child: _buildCalcKey('*', label: '\u00D7', type: _KeyType.operator)),
+                      Expanded(child: _buildCalcKey('-', label: '\u2212', type: _KeyType.operator)),
+                      Expanded(child: _buildCalcKey('+', label: '+', type: _KeyType.operator)),
+                    ],
                   ),
                 ),
               ],
             ),
+          ),
+          // Enter bar at the bottom
+          Expanded(
+            flex: 1,
+            child: _buildCalcKey('enter', label: 'ENTER', type: _KeyType.accent),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildKeyButton(String key, {String? label, bool isAccent = false}) {
-    final isBackspace = key == 'backspace';
-    final isSpecial = ['esc', 'tab', '/', '*', '-', '+'].contains(key);
+  Widget _buildCalcKey(
+    String key, {
+    String? label,
+    IconData? icon,
+    _KeyType type = _KeyType.number,
+  }) {
+    Color bgColor;
+    Color fgColor = Colors.white;
+    double fontSize = 24;
+    double iconSize = 24;
+
+    switch (type) {
+      case _KeyType.number:
+        bgColor = const Color(0xFF1E2A45);
+        fontSize = 26;
+        break;
+      case _KeyType.operator:
+        bgColor = const Color(0xFF2A1E45);
+        fgColor = const Color(0xFFB388FF);
+        fontSize = 28;
+        break;
+      case _KeyType.function:
+        bgColor = const Color(0xFF151D30);
+        fgColor = const Color(0xFF8899BB);
+        fontSize = 14;
+        iconSize = 22;
+        break;
+      case _KeyType.delete:
+        bgColor = const Color(0xFF3D1A1A);
+        fgColor = const Color(0xFFFF8A80);
+        iconSize = 22;
+        break;
+      case _KeyType.accent:
+        bgColor = const Color(0xFF3949AB);
+        fontSize = 18;
+        break;
+    }
+
+    final isBackspace = key == 'backspace' || type == _KeyType.delete;
 
     return Padding(
-      padding: const EdgeInsets.all(4),
-      child: ElevatedButton(
-        onPressed: () => _sendKey(key),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isAccent
-              ? Colors.indigoAccent
-              : (isSpecial ? const Color(0xFF182239) : const Color(0xFF1C2640)),
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+      padding: const EdgeInsets.all(2.5),
+      child: Material(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () {
+            if (!isBackspace) {
+              _sendKey(key);
+            }
+          },
+          onTapDown: isBackspace ? (_) => _startDeleteRepeating() : null,
+          onTapUp: isBackspace ? (_) => _stopDeleteRepeating() : null,
+          onTapCancel: isBackspace ? () => _stopDeleteRepeating() : null,
+          splashColor: isBackspace
+              ? Colors.redAccent.withOpacity(0.3)
+              : Colors.white.withOpacity(0.15),
+          highlightColor: Colors.white.withOpacity(0.08),
+          child: Center(
+            child: icon != null
+                ? Icon(icon, size: iconSize, color: fgColor)
+                : Text(
+                    label ?? key,
+                    style: TextStyle(
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.w600,
+                      color: fgColor,
+                    ),
+                  ),
           ),
-          padding: EdgeInsets.zero,
         ),
-        child: isBackspace
-            ? const Icon(Icons.backspace_outlined, size: 22)
-            : Text(
-                label ?? key.toUpperCase(),
-                style: TextStyle(
-                  fontSize: isSpecial || isAccent ? 16 : 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
       ),
     );
   }
 
-  // ---------- TAB 2: MEDIA ----------
+
+  // ---------- TAB 3: MEDIA ----------
   Widget _buildMediaTab() {
     return Center(
       child: Padding(
@@ -397,63 +542,133 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------- TAB 3: NAVIGATION ----------
+  // ---------- TAB 2: NAVIGATION & SCROLL ----------
   Widget _buildNavTab() {
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
+          // Row 1: Presentation & General Hotkeys
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _buildNavActionBtn('F5 (Play)', () => _sendKey('f5')),
-              _buildNavActionBtn('Shift+F5', () => _sendHotkey(['shift', 'f5'])),
-              _buildNavActionBtn('ESC', () => _sendKey('esc')),
-              _buildNavActionBtn('Space', () => _sendKey('space')),
+              Expanded(child: _buildNavActionBtn('F5', () => _sendKey('f5'))),
+              const SizedBox(width: 6),
+              Expanded(child: _buildNavActionBtn('Shift+F5', () => _sendHotkey(['shift', 'f5']))),
+              const SizedBox(width: 6),
+              Expanded(child: _buildNavActionBtn('ESC', () => _sendKey('esc'))),
+              const SizedBox(width: 6),
+              Expanded(child: _buildNavActionBtn('Space', () => _sendKey('space'))),
             ],
           ),
-          // D-Pad Grid
-          Column(
-            children: [
-              _buildDpadBtn(Icons.arrow_drop_up, 'up'),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _buildDpadBtn(Icons.arrow_left, 'left'),
-                  const SizedBox(width: 8),
-                  InkWell(
-                    onTap: () => _sendKey('enter'),
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      width: 68,
-                      height: 68,
-                      decoration: BoxDecoration(
-                        color: Colors.indigoAccent,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Center(
-                        child: Text(
-                          'OK',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          const SizedBox(height: 10),
+          // Row 2: Center Interactive Area (D-Pad & Scroll Zone)
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // D-Pad Left
+                Expanded(
+                  flex: 5,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF131B2E),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFF1E2A45)),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text(
+                          'NAVIGASI / D-PAD',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.0,
+                          ),
                         ),
-                      ),
+                        const Spacer(),
+                        _buildDpadBtn(Icons.arrow_drop_up, 'up'),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _buildDpadBtn(Icons.arrow_left, 'left'),
+                            const SizedBox(width: 6),
+                            _buildDpadCenterOk(),
+                            const SizedBox(width: 6),
+                            _buildDpadBtn(Icons.arrow_right, 'right'),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        _buildDpadBtn(Icons.arrow_drop_down, 'down'),
+                        const Spacer(),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  _buildDpadBtn(Icons.arrow_right, 'right'),
-                ],
-              ),
-              const SizedBox(height: 8),
-              _buildDpadBtn(Icons.arrow_drop_down, 'down'),
-            ],
+                ),
+                const SizedBox(width: 10),
+                // Scroll Zone Right
+                Expanded(
+                  flex: 4,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF131B2E),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFF1E2A45)),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                    child: Column(
+                      children: [
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.swap_vert, size: 14, color: Colors.indigoAccent),
+                            SizedBox(width: 4),
+                            Text(
+                              'SCROLL PC',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        _buildScrollButton(
+                          icon: Icons.keyboard_double_arrow_up,
+                          label: 'SCROLL UP',
+                          dy: 120,
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(child: _buildScrollTouchpad()),
+                        const SizedBox(height: 8),
+                        _buildScrollButton(
+                          icon: Icons.keyboard_double_arrow_down,
+                          label: 'SCROLL DOWN',
+                          dy: -120,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
+          const SizedBox(height: 10),
+          // Row 3: Page & Document Navigation
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _buildNavActionBtn('Page Up', () => _sendKey('pageup')),
-              _buildNavActionBtn('Page Down', () => _sendKey('pagedown')),
+              Expanded(child: _buildNavActionBtn('Page Up', () => _sendKey('pageup'))),
+              const SizedBox(width: 6),
+              Expanded(child: _buildNavActionBtn('Page Down', () => _sendKey('pagedown'))),
+              const SizedBox(width: 6),
+              Expanded(child: _buildNavActionBtn('Home', () => _sendKey('home'))),
+              const SizedBox(width: 6),
+              Expanded(child: _buildNavActionBtn('End', () => _sendKey('end'))),
             ],
           ),
         ],
@@ -462,17 +677,127 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildDpadBtn(IconData icon, String key) {
-    return InkWell(
-      onTap: () => _sendKey(key),
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        width: 68,
-        height: 68,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1C2640),
-          borderRadius: BorderRadius.circular(16),
+    return Material(
+      color: const Color(0xFF1C2640),
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _sendKey(key),
+        splashColor: Colors.indigoAccent.withOpacity(0.3),
+        child: SizedBox(
+          width: 52,
+          height: 52,
+          child: Icon(icon, size: 32, color: Colors.white),
         ),
-        child: Icon(icon, size: 36, color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _buildDpadCenterOk() {
+    return Material(
+      color: Colors.indigoAccent,
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _sendKey('enter'),
+        splashColor: Colors.white.withOpacity(0.3),
+        child: const SizedBox(
+          width: 52,
+          height: 52,
+          child: Center(
+            child: Text(
+              'OK',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScrollButton({
+    required IconData icon,
+    required String label,
+    required int dy,
+  }) {
+    return Material(
+      color: const Color(0xFF1C2640),
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () {},
+        onTapDown: (_) => _startScrollRepeating(dy),
+        onTapUp: (_) => _stopScrollRepeating(),
+        onTapCancel: () => _stopScrollRepeating(),
+        splashColor: Colors.indigoAccent.withOpacity(0.3),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: Colors.indigoAccent),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScrollTouchpad() {
+    return GestureDetector(
+      onVerticalDragStart: (_) {
+        _scrollDragAccumulator = 0;
+      },
+      onVerticalDragUpdate: (details) {
+        _scrollDragAccumulator += details.primaryDelta ?? 0;
+        const double threshold = 12.0;
+        if (_scrollDragAccumulator.abs() >= threshold) {
+          final int steps = (_scrollDragAccumulator / threshold).truncate();
+          _scrollDragAccumulator -= steps * threshold;
+          _sendScroll(steps * 120);
+        }
+      },
+      onVerticalDragEnd: (_) {
+        _scrollDragAccumulator = 0;
+      },
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F1523),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF1E2A45)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.unfold_more, color: Colors.indigoAccent.withOpacity(0.6), size: 28),
+            const SizedBox(height: 4),
+            Text(
+              'Geser\nScroll',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.grey.shade400,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                height: 1.2,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -485,10 +810,16 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       style: OutlinedButton.styleFrom(
         foregroundColor: Colors.white,
+        backgroundColor: const Color(0xFF151D30),
         side: const BorderSide(color: Color(0xFF2E3C5D)),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
-      child: Text(label),
+      child: Text(
+        label,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+      ),
     );
   }
 

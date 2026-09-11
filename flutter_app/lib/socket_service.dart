@@ -46,6 +46,10 @@ class SocketService {
     _socket?.emit('mouse_click', {'button': button});
   }
 
+  void sendMouseScroll(int dy) {
+    _socket?.emit('mouse_scroll', {'dy': dy});
+  }
+
   void sendTextInput(String text) {
     _socket?.emit('text_input', {'text': text});
   }

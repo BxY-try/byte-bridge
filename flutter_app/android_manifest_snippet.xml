@@ -15,7 +15,7 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
-        android:label="numkey_app"
+        android:label="ByteBridge"
         android:usesCleartextTraffic="true"
         ...>
         <!-- isi application yang sudah ada, jangan dihapus -->
