@@ -62,6 +62,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _serverIp;
   int? _serverPort;
   int _currentTabIndex = 0;
+  final TextEditingController _keyboardTextController = TextEditingController();
+  final FocusNode _keyboardFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -159,9 +161,47 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Timer? _deleteInitialTimer;
   Timer? _deleteRepeatTimer;
+  Timer? _arrowInitialTimer;
+  Timer? _arrowRepeatTimer;
   Timer? _scrollInitialTimer;
   Timer? _scrollRepeatTimer;
   double _scrollDragAccumulator = 0;
+
+  void _sendTextInput(String text) {
+    if (text.isEmpty) return;
+    HapticFeedback.lightImpact();
+    _socketService.sendTextInput(text);
+  }
+
+  void _submitKeyboardText() {
+    final text = _keyboardTextController.text;
+    if (text.trim().isEmpty) return;
+    _sendTextInput(text);
+    _keyboardTextController.clear();
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: AppColors.keyEnter, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Teks terkirim ke PC: "$text"',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+        duration: const Duration(milliseconds: 1500),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: AppColors.borderDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
 
   void _sendKey(String key) {
     HapticFeedback.lightImpact();
@@ -196,6 +236,24 @@ class _HomeScreenState extends State<HomeScreen> {
     _deleteRepeatTimer = null;
   }
 
+  void _startArrowRepeating(String key) {
+    _sendKey(key);
+    _arrowInitialTimer?.cancel();
+    _arrowRepeatTimer?.cancel();
+    _arrowInitialTimer = Timer(const Duration(milliseconds: 300), () {
+      _arrowRepeatTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+        _sendKey(key);
+      });
+    });
+  }
+
+  void _stopArrowRepeating() {
+    _arrowInitialTimer?.cancel();
+    _arrowInitialTimer = null;
+    _arrowRepeatTimer?.cancel();
+    _arrowRepeatTimer = null;
+  }
+
   void _startScrollRepeating(int dy) {
     _sendScroll(dy);
     _scrollInitialTimer?.cancel();
@@ -216,8 +274,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _keyboardTextController.dispose();
+    _keyboardFocusNode.dispose();
     _deleteInitialTimer?.cancel();
     _deleteRepeatTimer?.cancel();
+    _arrowInitialTimer?.cancel();
+    _arrowRepeatTimer?.cancel();
     _scrollInitialTimer?.cancel();
     _scrollRepeatTimer?.cancel();
     _socketService.dispose();
@@ -359,72 +421,105 @@ class _HomeScreenState extends State<HomeScreen> {
               index: _currentTabIndex,
               children: [
                 _buildNumpadTab(),
-                _buildNavTab(),
+                _buildKeyboardTab(),
                 _buildMediaTab(),
                 _buildShortcutsTab(),
+                _buildNavTab(),
               ],
             ),
           ),
         ],
       ),
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          border: Border(
-            top: BorderSide(color: Color(0xFFD8DDE3), width: 1.0),
-          ),
-        ),
-        child: NavigationBar(
-          selectedIndex: _currentTabIndex,
-          onDestinationSelected: (idx) {
-            HapticFeedback.selectionClick();
-            _stopDeleteRepeating();
-            _stopScrollRepeating();
-            setState(() => _currentTabIndex = idx);
-          },
-          backgroundColor: const Color(0xFFF2F5F8),
-          indicatorColor: AppColors.keyOperator,
-          surfaceTintColor: Colors.transparent,
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.dialpad, color: Color(0xFF5A606A)),
-              selectedIcon: Icon(Icons.dialpad, color: AppColors.textDark),
-              label: 'Numpad',
+      bottomNavigationBar: (_currentTabIndex == 1 && MediaQuery.of(context).viewInsets.bottom > 0)
+          ? null
+          : Container(
+              decoration: const BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: Color(0xFFD8DDE3), width: 1.0),
+                ),
+              ),
+              child: NavigationBarTheme(
+                data: NavigationBarThemeData(
+                  height: 56,
+                  indicatorColor: AppColors.keyOperator,
+                  labelTextStyle: MaterialStateProperty.resolveWith((states) {
+                    if (states.contains(MaterialState.selected)) {
+                      return const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textDark,
+                      );
+                    }
+                    return const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF5A606A),
+                    );
+                  }),
+                ),
+                child: NavigationBar(
+                  height: 56,
+                  selectedIndex: _currentTabIndex,
+                  onDestinationSelected: (idx) {
+                    HapticFeedback.selectionClick();
+                    _stopDeleteRepeating();
+                    _stopArrowRepeating();
+                    _stopScrollRepeating();
+                    setState(() => _currentTabIndex = idx);
+                    if (idx == 1) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _keyboardFocusNode.requestFocus();
+                      });
+                    } else {
+                      _keyboardFocusNode.unfocus();
+                    }
+                  },
+                  backgroundColor: const Color(0xFFF2F5F8),
+                  surfaceTintColor: Colors.transparent,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.dialpad, size: 20, color: Color(0xFF5A606A)),
+                      selectedIcon: Icon(Icons.dialpad, size: 20, color: AppColors.textDark),
+                      label: 'Numpad',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.keyboard, size: 20, color: Color(0xFF5A606A)),
+                      selectedIcon: Icon(Icons.keyboard, size: 20, color: AppColors.textDark),
+                      label: 'Keyboard',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.music_note, size: 20, color: Color(0xFF5A606A)),
+                      selectedIcon: Icon(Icons.music_note, size: 20, color: AppColors.textDark),
+                      label: 'Media',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.bolt, size: 20, color: Color(0xFF5A606A)),
+                      selectedIcon: Icon(Icons.bolt, size: 20, color: AppColors.textDark),
+                      label: 'Pintasan',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.navigation, size: 20, color: Color(0xFF5A606A)),
+                      selectedIcon: Icon(Icons.navigation, size: 20, color: AppColors.textDark),
+                      label: 'Navigasi',
+                    ),
+                  ],
+                ),
+              ),
             ),
-            NavigationDestination(
-              icon: Icon(Icons.navigation, color: Color(0xFF5A606A)),
-              selectedIcon: Icon(Icons.navigation, color: AppColors.textDark),
-              label: 'Navigasi',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.music_note, color: Color(0xFF5A606A)),
-              selectedIcon: Icon(Icons.music_note, color: AppColors.textDark),
-              label: 'Media',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.bolt, color: Color(0xFF5A606A)),
-              selectedIcon: Icon(Icons.bolt, color: AppColors.textDark),
-              label: 'Pintasan',
-            ),
-          ],
-        ),
-      ),
     );
   }
 
-  // ---------- TAB 1: NUMPAD (SESUAI GAMBAR REFERENSI) ----------
+  // ---------- TAB 1: NUMPAD (SESUAI GAMBAR REFERENSI + NAVIGASI ARAH) ----------
   Widget _buildNumpadTab() {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.only(left: 14, right: 14, bottom: 12, top: 4),
-        child: Align(
-          alignment: Alignment.bottomCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: 390,
-              maxHeight: 460,
-            ),
-            child: AspectRatio(
-              aspectRatio: 0.86,
+        padding: const EdgeInsets.only(left: 14, right: 14, bottom: 8, top: 4),
+        child: Center(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: SizedBox(
+              width: 380,
+              height: 520,
               child: Container(
                 decoration: BoxDecoration(
                   color: AppColors.housingBg,
@@ -441,88 +536,98 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-                padding: const EdgeInsets.all(5.0),
+                padding: const EdgeInsets.all(6.0),
                 child: Column(
                   children: [
-                    // Baris 1: %, /, *, -
+                    // Navigasi Arah Inverted-T
+                    _buildNavArrowCluster(),
+                    const SizedBox(height: 6),
+                    // Grid Numpad
                     Expanded(
-                      flex: 1,
-                      child: Row(
+                      child: Column(
                         children: [
-                          Expanded(child: _buildCalcKey('%', label: '%', type: _KeyType.operator)),
-                          Expanded(child: _buildCalcKey('/', label: '/', type: _KeyType.operator)),
-                          Expanded(child: _buildCalcKey('*', label: '*', type: _KeyType.operator)),
-                          Expanded(child: _buildCalcKey('-', label: '-', type: _KeyType.operator)),
-                        ],
-                      ),
-                    ),
-                    // Baris 2 sampai 5: 3 kolom angka di kiri, 1 kolom (+ dan Enter) di kanan
-                    Expanded(
-                      flex: 4,
-                      child: Row(
-                        children: [
-                          // 3 Kolom Kiri: 789, 456, 123, 0 . Del
+                          // Baris 1: %, /, *, -
                           Expanded(
-                            flex: 3,
-                            child: Column(
+                            flex: 1,
+                            child: Row(
                               children: [
+                                Expanded(child: _buildCalcKey('%', label: '%', type: _KeyType.operator)),
+                                Expanded(child: _buildCalcKey('/', label: '/', type: _KeyType.operator)),
+                                Expanded(child: _buildCalcKey('*', label: '*', type: _KeyType.operator)),
+                                Expanded(child: _buildCalcKey('-', label: '-', type: _KeyType.operator)),
+                              ],
+                            ),
+                          ),
+                          // Baris 2 sampai 5: 3 kolom angka di kiri, 1 kolom (+ dan Enter) di kanan
+                          Expanded(
+                            flex: 4,
+                            child: Row(
+                              children: [
+                                // 3 Kolom Kiri: 789, 456, 123, 0 . Del
                                 Expanded(
-                                  child: Row(
+                                  flex: 3,
+                                  child: Column(
                                     children: [
-                                      Expanded(child: _buildCalcKey('7')),
-                                      Expanded(child: _buildCalcKey('8')),
-                                      Expanded(child: _buildCalcKey('9')),
-                                    ],
-                                  ),
-                                ),
-                                Expanded(
-                                  child: Row(
-                                    children: [
-                                      Expanded(child: _buildCalcKey('4')),
-                                      Expanded(child: _buildCalcKey('5')),
-                                      Expanded(child: _buildCalcKey('6')),
-                                    ],
-                                  ),
-                                ),
-                                Expanded(
-                                  child: Row(
-                                    children: [
-                                      Expanded(child: _buildCalcKey('1')),
-                                      Expanded(child: _buildCalcKey('2')),
-                                      Expanded(child: _buildCalcKey('3')),
-                                    ],
-                                  ),
-                                ),
-                                Expanded(
-                                  child: Row(
-                                    children: [
-                                      Expanded(child: _buildCalcKey('0')),
-                                      Expanded(child: _buildCalcKey('.', label: '.')),
                                       Expanded(
-                                        child: _buildCalcKey(
-                                          'backspace',
-                                          label: 'Del',
-                                          type: _KeyType.del,
+                                        child: Row(
+                                          children: [
+                                            Expanded(child: _buildCalcKey('7')),
+                                            Expanded(child: _buildCalcKey('8')),
+                                            Expanded(child: _buildCalcKey('9')),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Row(
+                                          children: [
+                                            Expanded(child: _buildCalcKey('4')),
+                                            Expanded(child: _buildCalcKey('5')),
+                                            Expanded(child: _buildCalcKey('6')),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Row(
+                                          children: [
+                                            Expanded(child: _buildCalcKey('1')),
+                                            Expanded(child: _buildCalcKey('2')),
+                                            Expanded(child: _buildCalcKey('3')),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Row(
+                                          children: [
+                                            Expanded(child: _buildCalcKey('0')),
+                                            Expanded(child: _buildCalcKey('.', label: '.')),
+                                            Expanded(
+                                              child: _buildCalcKey(
+                                                'backspace',
+                                                label: 'Del',
+                                                type: _KeyType.del,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                          // 1 Kolom Kanan: + (tinggi 2 baris) dan Enter (tinggi 2 baris)
-                          Expanded(
-                            flex: 1,
-                            child: Column(
-                              children: [
+                                // 1 Kolom Kanan: + (tinggi 2 baris) dan Enter (tinggi 2 baris)
                                 Expanded(
                                   flex: 1,
-                                  child: _buildCalcKey('+', label: '+', type: _KeyType.operator),
-                                ),
-                                Expanded(
-                                  flex: 1,
-                                  child: _buildCalcKey('enter', label: 'Enter', type: _KeyType.enter),
+                                  child: Column(
+                                    children: [
+                                      Expanded(
+                                        flex: 1,
+                                        child: _buildCalcKey('+', label: '+', type: _KeyType.operator),
+                                      ),
+                                      Expanded(
+                                        flex: 1,
+                                        child: _buildCalcKey('enter', label: 'Enter', type: _KeyType.enter),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ),
@@ -532,6 +637,84 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavArrowCluster() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.09),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Colors.black.withOpacity(0.15),
+          width: 1.2,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildNavArrowBtn(Icons.arrow_drop_up, 'up'),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildNavArrowBtn(Icons.arrow_left, 'left'),
+              const SizedBox(width: 6),
+              _buildNavArrowBtn(Icons.arrow_drop_down, 'down'),
+              const SizedBox(width: 6),
+              _buildNavArrowBtn(Icons.arrow_right, 'right'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavArrowBtn(IconData icon, String key) {
+    return SizedBox(
+      width: 70,
+      height: 40,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.keyOperator,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(
+            color: AppColors.borderDark,
+            width: 1.8,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.12),
+              blurRadius: 3,
+              offset: const Offset(0, 1.5),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _sendKey(key),
+            onTapDown: (_) => _startArrowRepeating(key),
+            onTapUp: (_) => _stopArrowRepeating(),
+            onTapCancel: () => _stopArrowRepeating(),
+            child: Center(
+              child: Icon(
+                icon,
+                size: 28,
+                color: AppColors.textDark,
               ),
             ),
           ),
@@ -1118,6 +1301,294 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  // ---------- TAB 2: KEYBOARD HP (NATIVE BEHAVIOR) ----------
+  Widget _buildKeyboardTab() {
+    final bool isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+
+    return SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Kartu Input Teks Utama
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.borderDark, width: 2.0),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: AppColors.keyOperator,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppColors.borderDark, width: 1.5),
+                            ),
+                            child: const Icon(Icons.keyboard, size: 20, color: AppColors.textDark),
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'INPUT KEYBOARD PC',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.textDark,
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Ketik di HP, tekan Kirim / Enter di keyboard',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (isKeyboardOpen)
+                            TextButton.icon(
+                              onPressed: () {
+                                _keyboardFocusNode.unfocus();
+                              },
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              icon: const Icon(Icons.keyboard_hide, size: 18, color: Color(0xFF6B7280)),
+                              label: const Text('Tutup', style: TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      // Text Field
+                      TextField(
+                        controller: _keyboardTextController,
+                        focusNode: _keyboardFocusNode,
+                        maxLines: 4,
+                        minLines: 2,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _submitKeyboardText(),
+                        style: const TextStyle(
+                          color: AppColors.textDark,
+                          fontSize: 15,
+                          height: 1.3,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Ketik pesan, URL, atau perintah teks di sini...',
+                          hintStyle: TextStyle(
+                            color: AppColors.textDark.withOpacity(0.4),
+                            fontSize: 13,
+                          ),
+                          filled: true,
+                          fillColor: const Color(0xFFF7FAFC),
+                          contentPadding: const EdgeInsets.all(12),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: AppColors.borderDark, width: 1.8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Action buttons: Kirim ke PC & Hapus
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _submitKeyboardText,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.keyEnter,
+                                foregroundColor: AppColors.textDark,
+                                padding: const EdgeInsets.symmetric(vertical: 11),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  side: const BorderSide(color: AppColors.borderDark, width: 1.6),
+                                ),
+                              ),
+                              icon: const Icon(Icons.send_rounded, size: 18),
+                              label: const Text(
+                                'Kirim ke PC',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: () {
+                              _keyboardTextController.clear();
+                              HapticFeedback.selectionClick();
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.textDark,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                              side: const BorderSide(color: AppColors.borderDark, width: 1.6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            child: const Text(
+                              'Hapus',
+                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // Tombol Buka Keyboard jika tertutup
+                if (!isKeyboardOpen) ...[
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      _keyboardFocusNode.requestFocus();
+                    },
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: AppColors.textDark,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      side: const BorderSide(color: AppColors.borderDark, width: 1.6),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.keyboard_alt_outlined, size: 20),
+                    label: const Text(
+                      'Buka Keyboard HP',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                // Quick Keystrokes Box (Enter, Backspace, Spasi, Paste PC)
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.housingBg,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.borderDark, width: 1.8),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _buildQuickKeyBtn(
+                          icon: Icons.keyboard_return,
+                          label: 'Enter',
+                          onTap: () => _sendKey('enter'),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: _buildQuickKeyBtn(
+                          icon: Icons.backspace_outlined,
+                          label: 'Backspace',
+                          onTap: () => _sendKey('backspace'),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: _buildQuickKeyBtn(
+                          icon: Icons.space_bar,
+                          label: 'Spasi',
+                          onTap: () => _sendKey('space'),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: _buildQuickKeyBtn(
+                          icon: Icons.content_paste,
+                          label: 'Paste PC',
+                          onTap: () => _sendHotkey(['ctrl', 'v']),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickKeyBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.keyNumber,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.borderDark, width: 1.5),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(7),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () {
+            HapticFeedback.lightImpact();
+            onTap();
+          },
+          splashColor: Colors.black12,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 18, color: AppColors.textDark),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textDark,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

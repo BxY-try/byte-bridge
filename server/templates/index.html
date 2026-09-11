@@ -145,22 +145,60 @@
     .numpad-wrapper {
       display: flex;
       justify-content: center;
-      align-items: flex-end;
+      align-items: center;
       flex: 1;
       width: 100%;
-      padding: 6px 12px 14px 12px;
+      padding: 6px 12px 12px 12px;
+      overflow-y: auto;
     }
 
     .numpad-housing {
       background: var(--bg-housing);
       border: 2.4px solid var(--border-dark);
       border-radius: 20px;
-      padding: 6px;
+      padding: 8px;
       max-width: 380px;
       width: 100%;
-      aspect-ratio: 0.86;
       box-shadow: 0 8px 24px rgba(0,0,0,0.14);
       display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Inverted-T Directional Navigation Cluster */
+    .numpad-nav-cluster {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 6px 7px 6px;
+      background: rgba(0, 0, 0, 0.09);
+      border-radius: 14px;
+      border: 1.5px solid rgba(0, 0, 0, 0.15);
+    }
+
+    .nav-arrow-row {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      width: 100%;
+    }
+
+    .key-btn.nav-arrow {
+      background: var(--key-op);
+      color: var(--text-dark);
+      flex: 0 1 72px;
+      max-width: 78px;
+      height: 42px;
+      font-size: 1.25rem;
+      border-radius: 9px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.12);
+      touch-action: manipulation;
+    }
+
+    .key-btn.nav-arrow:active {
+      transform: scale(0.93);
+      filter: brightness(0.88);
     }
 
     .numpad-grid {
@@ -168,8 +206,8 @@
       grid-template-columns: repeat(4, 1fr);
       grid-template-rows: repeat(5, 1fr);
       grid-gap: 6px;
-      flex: 1;
-      height: 100%;
+      width: 100%;
+      aspect-ratio: 0.86;
     }
 
     .key-btn {
@@ -563,6 +601,18 @@
     <div id="tab-numpad" class="tab-content active">
       <div class="numpad-wrapper">
         <div class="numpad-housing">
+          <!-- Inverted-T Directional Navigation Cluster -->
+          <div class="numpad-nav-cluster">
+            <div class="nav-arrow-row">
+              <button class="key-btn nav-arrow" onmousedown="startArrowRepeating('up', event)" onmouseup="stopArrowRepeating()" onmouseleave="stopArrowRepeating()" ontouchstart="startArrowRepeating('up', event)" ontouchend="stopArrowRepeating()" aria-label="Atas">▲</button>
+            </div>
+            <div class="nav-arrow-row">
+              <button class="key-btn nav-arrow" onmousedown="startArrowRepeating('left', event)" onmouseup="stopArrowRepeating()" onmouseleave="stopArrowRepeating()" ontouchstart="startArrowRepeating('left', event)" ontouchend="stopArrowRepeating()" aria-label="Kiri">◀</button>
+              <button class="key-btn nav-arrow" onmousedown="startArrowRepeating('down', event)" onmouseup="stopArrowRepeating()" onmouseleave="stopArrowRepeating()" ontouchstart="startArrowRepeating('down', event)" ontouchend="stopArrowRepeating()" aria-label="Bawah">▼</button>
+              <button class="key-btn nav-arrow" onmousedown="startArrowRepeating('right', event)" onmouseup="stopArrowRepeating()" onmouseleave="stopArrowRepeating()" ontouchstart="startArrowRepeating('right', event)" ontouchend="stopArrowRepeating()" aria-label="Kanan">▶</button>
+            </div>
+          </div>
+
           <div class="numpad-grid">
             <button class="key-btn op" onclick="sendKey('%')">%</button>
             <button class="key-btn op" onclick="sendKey('/')">/</button>
@@ -585,7 +635,7 @@
 
             <button class="key-btn num" onclick="sendKey('0')">0</button>
             <button class="key-btn num" onclick="sendKey('.')">.</button>
-            <button class="key-btn del" onmousedown="startDeleteRepeating()" onmouseup="stopDeleteRepeating()" onmouseleave="stopDeleteRepeating()" ontouchstart="startDeleteRepeating(event)" ontouchend="stopDeleteRepeating()">Del</button>
+            <button class="key-btn del" onmousedown="startDeleteRepeating(event)" onmouseup="stopDeleteRepeating()" onmouseleave="stopDeleteRepeating()" ontouchstart="startDeleteRepeating(event)" ontouchend="stopDeleteRepeating()">Del</button>
           </div>
         </div>
       </div>
@@ -822,6 +872,28 @@
       deleteTimer = null;
       if (deleteRepeatTimer) clearInterval(deleteRepeatTimer);
       deleteRepeatTimer = null;
+    }
+
+    // Directional Navigation Repeating (Hold-to-repeat)
+    let arrowTimer = null;
+    let arrowRepeatTimer = null;
+
+    function startArrowRepeating(key, e) {
+      if (e && e.cancelable) e.preventDefault();
+      sendKey(key);
+      stopArrowRepeating();
+      arrowTimer = setTimeout(() => {
+        arrowRepeatTimer = setInterval(() => {
+          sendKey(key);
+        }, 80);
+      }, 300);
+    }
+
+    function stopArrowRepeating() {
+      if (arrowTimer) clearTimeout(arrowTimer);
+      arrowTimer = null;
+      if (arrowRepeatTimer) clearInterval(arrowRepeatTimer);
+      arrowRepeatTimer = null;
     }
 
     function sendHotkey(keys) {
