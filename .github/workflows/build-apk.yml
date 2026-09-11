@@ -27,10 +27,18 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Ensure Flutter Android Platform Files
+      - name: Generate Fresh Android Scaffolding
         run: |
           cd flutter_app
           flutter create . --platforms=android --org com.bytebridge
+          python3 -c "
+          p = 'android/app/src/main/AndroidManifest.xml'
+          with open(p, 'r') as f: content = f.read()
+          perms = '''    <uses-permission android:name=\"android.permission.INTERNET\" />\n    <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />\n    <uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" />\n    <uses-permission android:name=\"android.permission.VIBRATE\" />\n'''
+          content = content.replace('<application', perms + '    <application android:usesCleartextTraffic=\"true\"')
+          with open(p, 'w') as f: f.write(content)
+          print('Patched AndroidManifest.xml successfully')
+          "
 
       - name: Install dependencies
         run: |
