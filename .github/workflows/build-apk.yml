@@ -53,13 +53,13 @@ jobs:
       - name: Build Android APK
         run: |
           cd flutter_app
-          flutter build apk --release
+          flutter build apk --release --split-per-abi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: ByteBridge-Release-APK
-          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          path: flutter_app/build/app/outputs/flutter-apk/*.apk
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -68,6 +68,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ByteBridge ${{ github.ref_name }}
           generate_release_notes: true
-          files: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          files: flutter_app/build/app/outputs/flutter-apk/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -49,6 +49,8 @@ enum ConnState { discovering, connecting, connected, disconnected, failed }
 
 enum _KeyType { number, operator, del, enter, function }
 
+enum KeyboardInputMode { batch, realtime }
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -64,6 +66,15 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentTabIndex = 0;
   final TextEditingController _keyboardTextController = TextEditingController();
   final FocusNode _keyboardFocusNode = FocusNode();
+  bool _keyboardManuallyClosed = false;
+
+  // Mode Keyboard: Batch (Kotak Teks) vs Realtime (Live Typing)
+  KeyboardInputMode _keyboardInputMode = KeyboardInputMode.batch;
+  final TextEditingController _realtimeTextController = TextEditingController();
+  final FocusNode _realtimeFocusNode = FocusNode();
+  TextEditingValue _previousRealtimeValue = TextEditingValue.empty;
+  bool _isResettingRealtimeBuffer = false;
+  String _lastRealtimeEventDesc = 'Siap menerima input live...';
 
   // Pengaturan posisi & ukuran numpad dinamis (ala Gboard)
   double _numpadBottomOffset = 0.0; // 0 = mepet footer paling bawah
@@ -74,6 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _realtimeTextController.addListener(_handleRealtimeTextDiff);
     _startDiscovery();
   }
 
@@ -209,14 +221,166 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  FocusNode get _currentActiveFocusNode =>
+      _keyboardInputMode == KeyboardInputMode.batch ? _keyboardFocusNode : _realtimeFocusNode;
+
+  bool _isSoftKeyboardVisible(BuildContext context) {
+    if (!mounted) return false;
+    final double insetsBottom = MediaQuery.of(context).viewInsets.bottom;
+    if (insetsBottom == 0) {
+      _keyboardManuallyClosed = false;
+      return false;
+    }
+    if (_keyboardManuallyClosed) {
+      return false;
+    }
+    return insetsBottom > 0;
+  }
+
   void _openKeyboard() {
-    _keyboardFocusNode.unfocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _keyboardFocusNode.requestFocus();
-        SystemChannels.textInput.invokeMethod('TextInput.show');
+    if (!mounted) return;
+    final bool isAlreadyVisible = _isSoftKeyboardVisible(context);
+    final currentFocus = _currentActiveFocusNode;
+
+    // Mekanisme anti-flickering:
+    // Jika input box aktif sudah fokus DAN keyboard memang sudah aktif terbuka di layar,
+    // jangan panggil requestFocus ataupun TextInput.show lagi.
+    // Biarkan gesture Flutter menangani pergerakan kursor/seleksi teks secara native tanpa flickering.
+    if (currentFocus.hasFocus && isAlreadyVisible) {
+      return;
+    }
+
+    if (_keyboardManuallyClosed) {
+      setState(() {
+        _keyboardManuallyClosed = false;
+      });
+    }
+
+    if (!currentFocus.hasFocus) {
+      currentFocus.requestFocus();
+    }
+    SystemChannels.textInput.invokeMethod('TextInput.show');
+  }
+
+  void _closeKeyboard() {
+    if (!mounted) return;
+    setState(() {
+      _keyboardManuallyClosed = true;
+    });
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+  }
+
+  void _switchKeyboardMode(KeyboardInputMode mode) {
+    if (_keyboardInputMode == mode) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _keyboardInputMode = mode;
+      if (mode == KeyboardInputMode.realtime) {
+        _previousRealtimeValue = _realtimeTextController.value;
       }
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _openKeyboard();
+      }
+    });
+  }
+
+  void _resetRealtimeBuffer() {
+    HapticFeedback.selectionClick();
+    _isResettingRealtimeBuffer = true;
+    _realtimeTextController.clear();
+    _previousRealtimeValue = TextEditingValue.empty;
+    _isResettingRealtimeBuffer = false;
+    setState(() {
+      _lastRealtimeEventDesc = 'Layar HP dibersihkan (PC tidak berubah)';
+    });
+  }
+
+  void _handleRealtimeTextDiff() {
+    if (_isResettingRealtimeBuffer) return;
+    if (_keyboardInputMode != KeyboardInputMode.realtime) return;
+
+    final oldValue = _previousRealtimeValue;
+    final newValue = _realtimeTextController.value;
+    _previousRealtimeValue = newValue;
+
+    final oldText = oldValue.text;
+    final newText = newValue.text;
+
+    // 1. Jika teks sama persis, cek apakah posisi kursor digeser (misal geser spasi di Gboard)
+    if (oldText == newText) {
+      final oldOffset = oldValue.selection.baseOffset;
+      final newOffset = newValue.selection.baseOffset;
+      if (oldOffset >= 0 && newOffset >= 0 && oldOffset != newOffset) {
+        final diff = newOffset - oldOffset;
+        if (diff < 0) {
+          final count = -diff;
+          for (int i = 0; i < count; i++) {
+            _sendKey('left');
+          }
+          if (mounted) {
+            setState(() {
+              _lastRealtimeEventDesc = 'Kursor PC: ← ($count langkah)';
+            });
+          }
+        } else {
+          final count = diff;
+          for (int i = 0; i < count; i++) {
+            _sendKey('right');
+          }
+          if (mounted) {
+            setState(() {
+              _lastRealtimeEventDesc = 'Kursor PC: → ($count langkah)';
+            });
+          }
+        }
+      }
+      return;
+    }
+
+    // 2. Cari common prefix antara oldText dan newText
+    int commonPrefix = 0;
+    while (commonPrefix < oldText.length &&
+        commonPrefix < newText.length &&
+        oldText[commonPrefix] == newText[commonPrefix]) {
+      commonPrefix++;
+    }
+
+    // 3. Karakter yang dihapus setelah prefix (Backspace)
+    final int deleteCount = oldText.length - commonPrefix;
+    if (deleteCount > 0) {
+      for (int i = 0; i < deleteCount; i++) {
+        _sendKey('backspace');
+      }
+      if (mounted) {
+        setState(() {
+          _lastRealtimeEventDesc = 'Hapus di PC: ⌫ ($deleteCount huruf)';
+        });
+      }
+    }
+
+    // 4. Karakter baru yang ditambahkan setelah prefix
+    final String addedText = newText.substring(commonPrefix);
+    if (addedText.isNotEmpty) {
+      if (addedText == '\n') {
+        _sendKey('enter');
+      } else if (addedText == ' ') {
+        _sendKey('space');
+      } else {
+        _sendTextInput(addedText);
+      }
+      if (mounted) {
+        setState(() {
+          final display = addedText == ' '
+              ? '[Spasi]'
+              : addedText == '\n'
+                  ? '[Enter]'
+                  : addedText;
+          _lastRealtimeEventDesc = 'Ketik di PC: "$display"';
+        });
+      }
+    }
   }
 
   Future<void> _pasteToPcRealtime() async {
@@ -351,6 +515,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _realtimeTextController.removeListener(_handleRealtimeTextDiff);
+    _realtimeTextController.dispose();
+    _realtimeFocusNode.dispose();
     _keyboardTextController.dispose();
     _keyboardFocusNode.dispose();
     _deleteInitialTimer?.cancel();
@@ -507,7 +674,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: (_currentTabIndex == 1 && MediaQuery.of(context).viewInsets.bottom > 0)
+      bottomNavigationBar: (_currentTabIndex == 1 && _isSoftKeyboardVisible(context))
           ? null
           : Container(
               decoration: const BoxDecoration(
@@ -548,7 +715,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         _openKeyboard();
                       });
                     } else {
+                      _keyboardManuallyClosed = false;
                       _keyboardFocusNode.unfocus();
+                      _realtimeFocusNode.unfocus();
                     }
                   },
                   backgroundColor: const Color(0xFFF2F5F8),
@@ -1681,7 +1850,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ---------- TAB 2: KEYBOARD HP (NATIVE BEHAVIOR) ----------
   Widget _buildKeyboardTab() {
-    final bool isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+    final bool isKeyboardOpen = _isSoftKeyboardVisible(context);
+    final bool isRealtime = _keyboardInputMode == KeyboardInputMode.realtime;
 
     return SafeArea(
       child: Center(
@@ -1716,30 +1886,36 @@ class _HomeScreenState extends State<HomeScreen> {
                           Container(
                             padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: AppColors.keyOperator,
+                              color: isRealtime ? const Color(0xFFDCFCE7) : AppColors.keyOperator,
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(color: AppColors.borderDark, width: 1.5),
                             ),
-                            child: const Icon(Icons.keyboard, size: 20, color: AppColors.textDark),
+                            child: Icon(
+                              isRealtime ? Icons.bolt_rounded : Icons.keyboard,
+                              size: 20,
+                              color: isRealtime ? const Color(0xFF16A34A) : AppColors.textDark,
+                            ),
                           ),
                           const SizedBox(width: 10),
-                          const Expanded(
+                          Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'INPUT KEYBOARD PC',
-                                  style: TextStyle(
+                                  isRealtime ? 'KEYBOARD PC (REALTIME)' : 'KEYBOARD PC (BATCH)',
+                                  style: const TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.bold,
                                     color: AppColors.textDark,
                                     letterSpacing: 0.8,
                                   ),
                                 ),
-                                SizedBox(height: 2),
+                                const SizedBox(height: 2),
                                 Text(
-                                  'Ketik di HP, tekan Kirim / Enter di keyboard',
-                                  style: TextStyle(
+                                  isRealtime
+                                      ? 'Ketik & geser spasi langsung bereaksi di PC'
+                                      : 'Ketik di HP, periksa, tekan Kirim ke PC',
+                                  style: const TextStyle(
                                     fontSize: 11,
                                     color: Color(0xFF6B7280),
                                   ),
@@ -1749,9 +1925,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           if (isKeyboardOpen)
                             TextButton.icon(
-                              onPressed: () {
-                                _keyboardFocusNode.unfocus();
-                              },
+                              onPressed: _closeKeyboard,
                               style: TextButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 visualDensity: VisualDensity.compact,
@@ -1761,88 +1935,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                         ],
                       ),
-                      const SizedBox(height: 14),
-                      // Text Field
-                      TextField(
-                        controller: _keyboardTextController,
-                        focusNode: _keyboardFocusNode,
-                        onTap: _openKeyboard,
-                        maxLines: 4,
-                        minLines: 2,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _submitKeyboardText(),
-                        style: const TextStyle(
-                          color: AppColors.textDark,
-                          fontSize: 15,
-                          height: 1.3,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: 'Ketik pesan, URL, atau perintah teks di sini...',
-                          hintStyle: TextStyle(
-                            color: AppColors.textDark.withOpacity(0.4),
-                            fontSize: 13,
-                          ),
-                          filled: true,
-                          fillColor: const Color(0xFFF7FAFC),
-                          contentPadding: const EdgeInsets.all(12),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: AppColors.borderDark, width: 1.8),
-                          ),
-                        ),
-                      ),
                       const SizedBox(height: 12),
-                      // Action buttons: Kirim ke PC & Hapus
-                      Row(
-                        children: [
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: _submitKeyboardText,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: AppColors.keyEnter,
-                                foregroundColor: AppColors.textDark,
-                                padding: const EdgeInsets.symmetric(vertical: 11),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  side: const BorderSide(color: AppColors.borderDark, width: 1.6),
-                                ),
-                              ),
-                              icon: const Icon(Icons.send_rounded, size: 18),
-                              label: const Text(
-                                'Kirim ke PC',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          OutlinedButton(
-                            onPressed: () {
-                              _keyboardTextController.clear();
-                              HapticFeedback.selectionClick();
-                            },
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.textDark,
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                              side: const BorderSide(color: AppColors.borderDark, width: 1.6),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                            child: const Text(
-                              'Hapus',
-                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                            ),
-                          ),
-                        ],
-                      ),
+                      // Selector Mode: Batch vs Realtime
+                      _buildModeSelector(),
+                      const SizedBox(height: 14),
+                      // Area Input sesuai mode
+                      if (_keyboardInputMode == KeyboardInputMode.batch)
+                        _buildBatchInputArea()
+                      else
+                        _buildRealtimeInputArea(),
                     ],
                   ),
                 ),
@@ -1861,9 +1962,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     icon: const Icon(Icons.keyboard_alt_outlined, size: 20),
-                    label: const Text(
-                      'Buka Keyboard HP',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    label: Text(
+                      isRealtime ? 'Buka Keyboard HP (Mode Realtime)' : 'Buka Keyboard HP (Mode Batch)',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -1909,6 +2010,341 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildModeSelector() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAEFF5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFCBD5E1), width: 1.5),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildModeTabItem(
+              mode: KeyboardInputMode.batch,
+              icon: Icons.notes_rounded,
+              title: 'Mode Batch',
+              desc: 'Ketik dulu, lalu kirim',
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: _buildModeTabItem(
+              mode: KeyboardInputMode.realtime,
+              icon: Icons.bolt_rounded,
+              title: 'Mode Realtime',
+              desc: 'Live typing ke PC',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeTabItem({
+    required KeyboardInputMode mode,
+    required IconData icon,
+    required String title,
+    required String desc,
+  }) {
+    final bool isSelected = _keyboardInputMode == mode;
+    return InkWell(
+      onTap: () => _switchKeyboardMode(mode),
+      borderRadius: BorderRadius.circular(9),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(9),
+          border: isSelected
+              ? Border.all(color: AppColors.borderDark, width: 1.5)
+              : Border.all(color: Colors.transparent, width: 1.5),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1.5),
+                  ),
+                ]
+              : null,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 15,
+                  color: isSelected
+                      ? (mode == KeyboardInputMode.realtime ? const Color(0xFF16A34A) : AppColors.textDark)
+                      : const Color(0xFF6B7280),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                    color: isSelected ? AppColors.textDark : const Color(0xFF6B7280),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 1),
+            Text(
+              desc,
+              style: TextStyle(
+                fontSize: 9.5,
+                color: isSelected ? AppColors.textDark.withOpacity(0.7) : const Color(0xFF94A3B8),
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBatchInputArea() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _keyboardTextController,
+          focusNode: _keyboardFocusNode,
+          onTap: _openKeyboard,
+          maxLines: 4,
+          minLines: 2,
+          textInputAction: TextInputAction.send,
+          onSubmitted: (_) => _submitKeyboardText(),
+          style: const TextStyle(
+            color: AppColors.textDark,
+            fontSize: 15,
+            height: 1.3,
+          ),
+          decoration: InputDecoration(
+            hintText: 'Ketik pesan, URL, atau perintah teks di sini...',
+            hintStyle: TextStyle(
+              color: AppColors.textDark.withOpacity(0.4),
+              fontSize: 13,
+            ),
+            filled: true,
+            fillColor: const Color(0xFFF7FAFC),
+            contentPadding: const EdgeInsets.all(12),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppColors.borderDark, width: 1.8),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Action buttons: Kirim ke PC & Hapus
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _submitKeyboardText,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.keyEnter,
+                  foregroundColor: AppColors.textDark,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: const BorderSide(color: AppColors.borderDark, width: 1.6),
+                  ),
+                ),
+                icon: const Icon(Icons.send_rounded, size: 18),
+                label: const Text(
+                  'Kirim ke PC',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              onPressed: () {
+                _keyboardTextController.clear();
+                HapticFeedback.selectionClick();
+              },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.textDark,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                side: const BorderSide(color: AppColors.borderDark, width: 1.6),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text(
+                'Hapus',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRealtimeInputArea() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Live stream status header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0FDF4),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFBBF7D0), width: 1.2),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF22C55E),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _lastRealtimeEventDesc,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF15803D),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        // Live Text Field
+        TextField(
+          controller: _realtimeTextController,
+          focusNode: _realtimeFocusNode,
+          onTap: _openKeyboard,
+          maxLines: 4,
+          minLines: 2,
+          autocorrect: false,
+          enableSuggestions: false,
+          keyboardType: TextInputType.text,
+          textInputAction: TextInputAction.newline,
+          style: const TextStyle(
+            fontFamily: 'monospace',
+            color: AppColors.textDark,
+            fontSize: 14.5,
+            height: 1.35,
+          ),
+          decoration: InputDecoration(
+            hintText: 'Ketik di sini... Tombol, hapus, & geser spasi langsung bereaksi di PC.',
+            hintStyle: TextStyle(
+              color: AppColors.textDark.withOpacity(0.4),
+              fontSize: 12.5,
+            ),
+            filled: true,
+            fillColor: const Color(0xFFF8FAFC),
+            contentPadding: const EdgeInsets.all(12),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppColors.borderDark, width: 1.8),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        // Realtime actions: Backspace PC, Enter PC, Reset Layar HP
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  _sendKey('backspace');
+                },
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: AppColors.keyDel.withOpacity(0.12),
+                  foregroundColor: const Color(0xFF991B1B),
+                  side: const BorderSide(color: Color(0xFFF87171), width: 1.4),
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+                ),
+                icon: const Icon(Icons.backspace_outlined, size: 16),
+                label: const Text(
+                  'Backspace PC',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  _sendKey('enter');
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.keyEnter,
+                  foregroundColor: AppColors.textDark,
+                  side: const BorderSide(color: AppColors.borderDark, width: 1.4),
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+                ),
+                icon: const Icon(Icons.keyboard_return, size: 16),
+                label: const Text(
+                  'Enter PC',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            OutlinedButton.icon(
+              onPressed: _resetRealtimeBuffer,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF475569),
+                side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+              ),
+              icon: const Icon(Icons.cleaning_services_outlined, size: 16),
+              label: const Text(
+                'Reset Layar',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 11.5),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 

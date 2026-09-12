@@ -68,8 +68,9 @@ Proyek ini sudah dilengkapi file CI workflow di `.github/workflows/build-apk.yml
    ```
 3. Atau kompilasi file APK:
    ```bash
-   flutter build apk --release
+   flutter build apk --release --split-per-abi
    ```
+   *(File APK siap pakai untuk smartphone 64-bit modern ada di `flutter_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk` dengan ukuran jauh lebih ringan ~16 MB)*
 
 Aplikasi Flutter ini memiliki fitur **UDP Auto-Discovery**: begitu dibuka di HP, aplikasi akan mendengarkan sinyal broadcast dari PC di port UDP `37020` dan terhubung otomatis tanpa Anda perlu mengetik IP.
 
