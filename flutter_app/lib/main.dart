@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'discovery_service.dart';
@@ -19,6 +21,11 @@ class AppColors {
   static const Color keyDel = Color(0xFFD46C6D);
   static const Color keyEnter = Color(0xFF72B67D);
   static const Color textDark = Color(0xFF1B1E22);
+  static const Color accentGreen = Color(0xFF237C58);
+  static const Color accentGreenDark = Color(0xFF1B6547);
+  static const Color textSecondary = Color(0xFF5A606A);
+  static const Color cardBorder = Color(0xFFD8DDE3);
+  static const Color cardInner = Color(0xFFF2F5F8);
 }
 
 class ByteBridgeApp extends StatelessWidget {
@@ -49,8 +56,6 @@ enum ConnState { discovering, connecting, connected, disconnected, failed }
 
 enum _KeyType { number, operator, del, enter, function }
 
-enum KeyboardInputMode { batch, realtime }
-
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -68,13 +73,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final FocusNode _keyboardFocusNode = FocusNode();
   bool _keyboardManuallyClosed = false;
 
-  // Mode Keyboard: Batch (Kotak Teks) vs Realtime (Live Typing)
-  KeyboardInputMode _keyboardInputMode = KeyboardInputMode.batch;
-  final TextEditingController _realtimeTextController = TextEditingController();
-  final FocusNode _realtimeFocusNode = FocusNode();
-  TextEditingValue _previousRealtimeValue = TextEditingValue.empty;
-  bool _isResettingRealtimeBuffer = false;
-  String _lastRealtimeEventDesc = 'Siap menerima input live...';
+  // Riwayat teks keyboard terakhir untuk fitur isi ulang lokal
+  String? _lastSentKeyboardText;
 
   // Pengaturan posisi & ukuran numpad dinamis (ala Gboard)
   double _numpadBottomOffset = 0.0; // 0 = mepet footer paling bawah
@@ -82,11 +82,85 @@ class _HomeScreenState extends State<HomeScreen> {
   double _numpadHorizontalAlign = 0.0; // -1.0 (kiri), 0.0 (tengah), 1.0 (kanan)
   bool _isAdjustingNumpad = false;
 
+  // State Media Controller Dua Arah
+  Map<String, dynamic>? _mediaState;
+  Uint8List? _cachedThumbnailBytes;
+  String? _cachedThumbnailHash;
+  Timer? _mediaInterpolationTimer;
+  double _localSeekPos = 0.0;
+  double _serverSeekPos = 0.0;
+  double _mediaDuration = 0.0;
+  double _playbackRate = 1.0;
+  String _playbackStatus = 'paused';
+  DateTime _lastMediaSyncTime = DateTime.now();
+  bool _isUserDraggingSeek = false;
+  bool _isUserDraggingVolume = false;
+  double _localVolume = 50.0;
+  bool _isAdvancedExpanded = false;
+  int _currentSpeedIndex = 1;
+  final List<double> _speedOptions = [0.75, 1.0, 1.25, 1.5, 2.0];
+
   @override
   void initState() {
     super.initState();
-    _realtimeTextController.addListener(_handleRealtimeTextDiff);
     _startDiscovery();
+    // Timer interpolasi lokal (halus tanpa spam network)
+    _mediaInterpolationTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (_mediaState != null && _playbackStatus == 'playing' && !_isUserDraggingSeek && _mediaDuration > 0) {
+        final elapsed = DateTime.now().difference(_lastMediaSyncTime).inMilliseconds / 1000.0;
+        final cur = (_serverSeekPos + elapsed * _playbackRate).clamp(0.0, _mediaDuration);
+        if (mounted && (cur - _localSeekPos).abs() > 0.25) {
+          setState(() {
+            _localSeekPos = cur;
+          });
+        }
+      }
+    });
+  }
+
+  void _onMediaStateReceived(Map<String, dynamic> data) {
+    if (!mounted) return;
+    setState(() {
+      _mediaState = data;
+      // Handle thumbnail caching (menghemat 99.8% bandwidth)
+      final String? thumbStr = data['thumbnail'] as String?;
+      final String? thumbHash = data['thumbnail_hash'] as String?;
+      if (thumbStr != null && thumbStr.isNotEmpty) {
+        try {
+          final String base64Content = thumbStr.contains(',') ? thumbStr.split(',').last : thumbStr;
+          _cachedThumbnailBytes = base64Decode(base64Content);
+          _cachedThumbnailHash = thumbHash;
+        } catch (_) {}
+      } else if (thumbHash != null && thumbHash == _cachedThumbnailHash && _cachedThumbnailBytes != null) {
+        // Thumbnail sama, pertahankan yang ada di cache
+      } else if (data['available'] == false) {
+        _cachedThumbnailBytes = null;
+      }
+
+      _serverSeekPos = (data['position'] as num?)?.toDouble() ?? 0.0;
+      _mediaDuration = (data['duration'] as num?)?.toDouble() ?? 0.0;
+      _playbackRate = (data['playback_rate'] as num?)?.toDouble() ?? 1.0;
+      _playbackStatus = (data['status'] as String?) ?? 'paused';
+      _lastMediaSyncTime = DateTime.now();
+
+      if (!_isUserDraggingSeek) {
+        _localSeekPos = _serverSeekPos.clamp(0.0, _mediaDuration > 0 ? _mediaDuration : 100.0);
+      }
+      if (!_isUserDraggingVolume) {
+        _localVolume = (data['volume'] as num?)?.toDouble() ?? 50.0;
+      }
+
+      final rate = (data['playback_rate'] as num?)?.toDouble();
+      if (rate != null) {
+        final idx = _speedOptions.indexOf(rate);
+        if (idx != -1) _currentSpeedIndex = idx;
+      }
+    });
+  }
+
+  void _sendMediaCommand(String action, [dynamic value]) {
+    HapticFeedback.lightImpact();
+    _socketService.sendMediaCommand(action, value);
   }
 
   Future<void> _startDiscovery() async {
@@ -118,6 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
       onError: (_) {
         if (mounted) setState(() => _state = ConnState.disconnected);
       },
+      onMediaState: _onMediaStateReceived,
     );
   }
 
@@ -195,6 +270,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final text = _keyboardTextController.text;
     if (text.trim().isEmpty) return;
     _sendTextInput(text);
+    setState(() {
+      _lastSentKeyboardText = text;
+    });
     _keyboardTextController.clear();
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -221,8 +299,19 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  FocusNode get _currentActiveFocusNode =>
-      _keyboardInputMode == KeyboardInputMode.batch ? _keyboardFocusNode : _realtimeFocusNode;
+  void _recallLastSentText() {
+    if (_lastSentKeyboardText == null || _lastSentKeyboardText!.isEmpty) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _keyboardTextController.text = _lastSentKeyboardText!;
+      _keyboardTextController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _keyboardTextController.text.length),
+      );
+    });
+    _openKeyboard();
+  }
+
+  FocusNode get _currentActiveFocusNode => _keyboardFocusNode;
 
   bool _isSoftKeyboardVisible(BuildContext context) {
     if (!mounted) return false;
@@ -245,7 +334,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // Mekanisme anti-flickering:
     // Jika input box aktif sudah fokus DAN keyboard memang sudah aktif terbuka di layar,
     // jangan panggil requestFocus ataupun TextInput.show lagi.
-    // Biarkan gesture Flutter menangani pergerakan kursor/seleksi teks secara native tanpa flickering.
     if (currentFocus.hasFocus && isAlreadyVisible) {
       return;
     }
@@ -270,120 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
     SystemChannels.textInput.invokeMethod('TextInput.hide');
   }
 
-  void _switchKeyboardMode(KeyboardInputMode mode) {
-    if (_keyboardInputMode == mode) return;
-    HapticFeedback.selectionClick();
-    setState(() {
-      _keyboardInputMode = mode;
-      if (mode == KeyboardInputMode.realtime) {
-        _previousRealtimeValue = _realtimeTextController.value;
-      }
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _openKeyboard();
-      }
-    });
-  }
-
-  void _resetRealtimeBuffer() {
-    HapticFeedback.selectionClick();
-    _isResettingRealtimeBuffer = true;
-    _realtimeTextController.clear();
-    _previousRealtimeValue = TextEditingValue.empty;
-    _isResettingRealtimeBuffer = false;
-    setState(() {
-      _lastRealtimeEventDesc = 'Layar HP dibersihkan (PC tidak berubah)';
-    });
-  }
-
-  void _handleRealtimeTextDiff() {
-    if (_isResettingRealtimeBuffer) return;
-    if (_keyboardInputMode != KeyboardInputMode.realtime) return;
-
-    final oldValue = _previousRealtimeValue;
-    final newValue = _realtimeTextController.value;
-    _previousRealtimeValue = newValue;
-
-    final oldText = oldValue.text;
-    final newText = newValue.text;
-
-    // 1. Jika teks sama persis, cek apakah posisi kursor digeser (misal geser spasi di Gboard)
-    if (oldText == newText) {
-      final oldOffset = oldValue.selection.baseOffset;
-      final newOffset = newValue.selection.baseOffset;
-      if (oldOffset >= 0 && newOffset >= 0 && oldOffset != newOffset) {
-        final diff = newOffset - oldOffset;
-        if (diff < 0) {
-          final count = -diff;
-          for (int i = 0; i < count; i++) {
-            _sendKey('left');
-          }
-          if (mounted) {
-            setState(() {
-              _lastRealtimeEventDesc = 'Kursor PC: ← ($count langkah)';
-            });
-          }
-        } else {
-          final count = diff;
-          for (int i = 0; i < count; i++) {
-            _sendKey('right');
-          }
-          if (mounted) {
-            setState(() {
-              _lastRealtimeEventDesc = 'Kursor PC: → ($count langkah)';
-            });
-          }
-        }
-      }
-      return;
-    }
-
-    // 2. Cari common prefix antara oldText dan newText
-    int commonPrefix = 0;
-    while (commonPrefix < oldText.length &&
-        commonPrefix < newText.length &&
-        oldText[commonPrefix] == newText[commonPrefix]) {
-      commonPrefix++;
-    }
-
-    // 3. Karakter yang dihapus setelah prefix (Backspace)
-    final int deleteCount = oldText.length - commonPrefix;
-    if (deleteCount > 0) {
-      for (int i = 0; i < deleteCount; i++) {
-        _sendKey('backspace');
-      }
-      if (mounted) {
-        setState(() {
-          _lastRealtimeEventDesc = 'Hapus di PC: ⌫ ($deleteCount huruf)';
-        });
-      }
-    }
-
-    // 4. Karakter baru yang ditambahkan setelah prefix
-    final String addedText = newText.substring(commonPrefix);
-    if (addedText.isNotEmpty) {
-      if (addedText == '\n') {
-        _sendKey('enter');
-      } else if (addedText == ' ') {
-        _sendKey('space');
-      } else {
-        _sendTextInput(addedText);
-      }
-      if (mounted) {
-        setState(() {
-          final display = addedText == ' '
-              ? '[Spasi]'
-              : addedText == '\n'
-                  ? '[Enter]'
-                  : addedText;
-          _lastRealtimeEventDesc = 'Ketik di PC: "$display"';
-        });
-      }
-    }
-  }
-
-  Future<void> _pasteToPcRealtime() async {
+  Future<void> _pasteToPc() async {
     HapticFeedback.lightImpact();
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -515,9 +490,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _realtimeTextController.removeListener(_handleRealtimeTextDiff);
-    _realtimeTextController.dispose();
-    _realtimeFocusNode.dispose();
     _keyboardTextController.dispose();
     _keyboardFocusNode.dispose();
     _deleteInitialTimer?.cancel();
@@ -526,6 +498,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _arrowRepeatTimer?.cancel();
     _scrollInitialTimer?.cancel();
     _scrollRepeatTimer?.cancel();
+    _mediaInterpolationTimer?.cancel();
     _socketService.dispose();
     super.dispose();
   }
@@ -717,7 +690,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     } else {
                       _keyboardManuallyClosed = false;
                       _keyboardFocusNode.unfocus();
-                      _realtimeFocusNode.unfocus();
                     }
                   },
                   backgroundColor: const Color(0xFFF2F5F8),
@@ -1404,7 +1376,30 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                         const SizedBox(height: 6),
-                        _buildDpadBtn(Icons.arrow_drop_down, 'down'),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _buildDpadActionBtn(
+                              icon: Icons.backspace_outlined,
+                              label: 'Bksp',
+                              onTap: () => _sendKey('backspace'),
+                              onTapDown: (_) => _startDeleteRepeating(),
+                              onTapUp: (_) => _stopDeleteRepeating(),
+                              onTapCancel: () => _stopDeleteRepeating(),
+                              bgColor: AppColors.keyDel.withOpacity(0.22),
+                              borderColor: AppColors.keyDel,
+                            ),
+                            const SizedBox(width: 6),
+                            _buildDpadBtn(Icons.arrow_drop_down, 'down'),
+                            const SizedBox(width: 6),
+                            _buildDpadActionBtn(
+                              icon: Icons.delete_outline,
+                              label: 'Del',
+                              onTap: () => _sendKey('del'),
+                              bgColor: AppColors.keyOperator,
+                            ),
+                          ],
+                        ),
                         const Spacer(),
                       ],
                     ),
@@ -1491,11 +1486,67 @@ class _HomeScreenState extends State<HomeScreen> {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => _sendKey(key),
+          onTapDown: (_) => _startArrowRepeating(key),
+          onTapUp: (_) => _stopArrowRepeating(),
+          onTapCancel: () => _stopArrowRepeating(),
           splashColor: Colors.black12,
           child: SizedBox(
             width: 52,
             height: 52,
             child: Icon(icon, size: 32, color: AppColors.textDark),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDpadActionBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    GestureTapDownCallback? onTapDown,
+    GestureTapUpCallback? onTapUp,
+    GestureTapCancelCallback? onTapCancel,
+    Color? bgColor,
+    Color? borderColor,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: bgColor ?? AppColors.keyNumber,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor ?? AppColors.borderDark, width: 1.6),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(11),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () {
+            HapticFeedback.lightImpact();
+            onTap();
+          },
+          onTapDown: onTapDown,
+          onTapUp: onTapUp,
+          onTapCancel: onTapCancel,
+          splashColor: Colors.black12,
+          child: SizedBox(
+            width: 52,
+            height: 52,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 21, color: AppColors.textDark),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textDark,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1659,91 +1710,93 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------- TAB 3: MEDIA ----------
+  // ---------- TAB 3: MEDIA (Opsi 3 - Card Minimalis One-Hand Friendly) ----------
   Widget _buildMediaTab() {
     return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Volume Card
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.borderDark, width: 1.8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.06),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.all(18),
-                child: Column(
+              // 1. Header (Judul Media + Edit Icon placeholder)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
-                      'VOLUME PC',
+                      'Media',
                       style: TextStyle(
-                        color: Color(0xFF4B5563),
-                        fontSize: 12,
+                        fontSize: 24,
                         fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
+                        color: AppColors.textDark,
+                        letterSpacing: -0.5,
                       ),
                     ),
-                    const SizedBox(height: 18),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildCircleBtn(Icons.volume_down, 'volumedown'),
-                        _buildCircleBtn(Icons.volume_off, 'volumemute'),
-                        _buildCircleBtn(Icons.volume_up, 'volumeup'),
-                      ],
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 20, color: AppColors.textSecondary),
+                      onPressed: () {},
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
-              // Music Card
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.borderDark, width: 1.8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.06),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  children: [
-                    const Text(
-                      'KONTROL PEMUTAR MUSIK',
-                      style: TextStyle(
-                        color: Color(0xFF4B5563),
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
+              const SizedBox(height: 8),
+
+              // 2. Container Card Utama Berorientasi Bawah (Fixed Height inside Expanded)
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: AppColors.cardBorder, width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 18,
+                        offset: const Offset(0, 4),
                       ),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildCircleBtn(Icons.skip_previous, 'prevtrack'),
-                        _buildCircleBtn(Icons.play_arrow, 'playpause', isLarge: true),
-                        _buildCircleBtn(Icons.skip_next, 'nexttrack'),
-                      ],
-                    ),
-                  ],
+                    ],
+                  ),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      // Spacer Fleksibel di paling atas (menyusut saat Advanced Panel membesar ke atas)
+                      const Spacer(),
+
+                      // Media Info Card
+                      _buildMediaInfoCard(),
+                      const SizedBox(height: 12),
+
+                      // Volume Bar Horizontal
+                      _buildVolumeBar(),
+                      const SizedBox(height: 14),
+
+                      // Main Controls (Prev / Play-Pause / Next)
+                      _buildMainControlsRow(),
+                      const SizedBox(height: 14),
+
+                      // Advanced Panel (Animasi Dorong ke Atas)
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOutCubic,
+                        alignment: Alignment.bottomCenter,
+                        child: _isAdvancedExpanded
+                            ? Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: _buildAdvancedPanel(),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+
+                      // Tombol Toggle "Kontrol Lanjutan" (Anchor point tetap di posisi paling bawah)
+                      _buildAdvancedToggleButton(),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -1753,31 +1806,604 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildCircleBtn(IconData icon, String key, {bool isLarge = false}) {
+  Widget _buildMediaInfoCard() {
+    final bool isAvailable = _mediaState?['available'] == true;
+    final String title = isAvailable ? (_mediaState?['title'] ?? 'Tidak Ada Media') : 'Tidak Ada Media';
+    final String artist = isAvailable ? (_mediaState?['artist'] ?? (_mediaState?['album'] ?? 'Putar media di PC')) : 'Putar musik/video di PC untuk mengontrol';
+    final String appName = _mediaState?['app_name'] ?? 'PC Audio';
+    final String procName = _mediaState?['process_name'] ?? 'Windows';
+
     return Container(
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: AppColors.borderDark, width: isLarge ? 2.2 : 1.8),
+        color: AppColors.cardInner,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.cardBorder, width: 1),
       ),
-      child: Material(
-        color: isLarge ? AppColors.keyEnter : AppColors.keyOperator,
-        shape: const CircleBorder(),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => _sendKey(key),
-          splashColor: Colors.black12,
-          child: SizedBox(
-            width: isLarge ? 72 : 56,
-            height: isLarge ? 72 : 56,
-            child: Icon(
-              icon,
-              size: isLarge ? 36 : 26,
-              color: AppColors.textDark,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              // Thumbnail Box
+              Container(
+                width: 62,
+                height: 62,
+                decoration: BoxDecoration(
+                  color: AppColors.keyOperator,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.cardBorder),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: _cachedThumbnailBytes != null
+                    ? Image.memory(_cachedThumbnailBytes!, fit: BoxFit.cover)
+                    : const Center(
+                        child: Icon(Icons.music_note, color: AppColors.textSecondary, size: 28),
+                      ),
+              ),
+              const SizedBox(width: 12),
+              // Meta Info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Source Switcher Pill
+                    InkWell(
+                      onTap: _showSessionSwitcherBottomSheet,
+                      borderRadius: BorderRadius.circular(999),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.04),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              appName,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: AppColors.textDark),
+                            ),
+                            Text(
+                              ' · $procName',
+                              style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.keyboard_arrow_down, size: 14, color: AppColors.textSecondary),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    // Title
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textDark,
+                      ),
+                    ),
+                    // Artist
+                    Text(
+                      artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Seek Slider & Time Labels
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 5,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+              activeTrackColor: AppColors.accentGreen,
+              inactiveTrackColor: const Color(0xFFD5DFE3),
+              thumbColor: AppColors.accentGreen,
             ),
+            child: Slider(
+              value: _localSeekPos.clamp(0.0, _mediaDuration > 0 ? _mediaDuration : 100.0),
+              min: 0.0,
+              max: _mediaDuration > 0 ? _mediaDuration : 100.0,
+              onChanged: (isAvailable && _mediaDuration > 0)
+                  ? (val) {
+                      setState(() {
+                        _isUserDraggingSeek = true;
+                        _localSeekPos = val;
+                      });
+                    }
+                  : null,
+              onChangeEnd: (isAvailable && _mediaDuration > 0)
+                  ? (val) {
+                      _isUserDraggingSeek = false;
+                      _sendMediaCommand('seek', val);
+                    }
+                  : null,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _formatDuration(_localSeekPos),
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                ),
+                Text(
+                  _formatDuration(_mediaDuration),
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVolumeBar() {
+    final bool isMuted = _mediaState?['is_muted'] == true;
+
+    return Container(
+      height: 46,
+      decoration: BoxDecoration(
+        color: AppColors.cardInner,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.cardBorder, width: 1),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          // Mute Button
+          IconButton(
+            icon: Icon(
+              isMuted ? Icons.volume_off : Icons.volume_up,
+              color: isMuted ? AppColors.keyDel : AppColors.textDark,
+              size: 20,
+            ),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: () => _sendMediaCommand('toggle_mute'),
+          ),
+          const SizedBox(width: 8),
+          // Volume Slider
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 5,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                activeTrackColor: AppColors.accentGreen,
+                inactiveTrackColor: const Color(0xFFD5DFE3),
+                thumbColor: AppColors.accentGreen,
+              ),
+              child: Slider(
+                value: _localVolume.clamp(0.0, 100.0),
+                min: 0.0,
+                max: 100.0,
+                onChanged: (val) {
+                  setState(() {
+                    _isUserDraggingVolume = true;
+                    _localVolume = val;
+                  });
+                },
+                onChangeEnd: (val) {
+                  _isUserDraggingVolume = false;
+                  _sendMediaCommand('set_volume', val.round());
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // Percentage Label
+          SizedBox(
+            width: 36,
+            child: Text(
+              '${_localVolume.round()}%',
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMainControlsRow() {
+    final bool isAvailable = _mediaState?['available'] == true;
+    final Map<String, dynamic>? ctrl = _mediaState?['controls'] as Map<String, dynamic>?;
+    final bool canPrev = isAvailable && (ctrl?['can_previous'] == true);
+    final bool canNext = isAvailable && (ctrl?['can_next'] == true);
+    final bool isPlaying = _playbackStatus == 'playing';
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        // Previous Button
+        _buildTransportCircleBtn(
+          icon: Icons.skip_previous_rounded,
+          size: 62,
+          iconSize: 28,
+          enabled: canPrev,
+          onTap: () => _sendMediaCommand('previous'),
+        ),
+        const SizedBox(width: 20),
+        // Play / Pause Button (Large Green Accent)
+        Container(
+          width: 78,
+          height: 78,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              colors: [Color(0xFF278C64), Color(0xFF1B6547)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF237C58).withOpacity(0.38),
+                blurRadius: 18,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => _sendMediaCommand('play_pause'),
+              child: Icon(
+                isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                size: 40,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 20),
+        // Next Button
+        _buildTransportCircleBtn(
+          icon: Icons.skip_next_rounded,
+          size: 62,
+          iconSize: 28,
+          enabled: canNext,
+          onTap: () => _sendMediaCommand('next'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTransportCircleBtn({
+    required IconData icon,
+    required double size,
+    required double iconSize,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.35,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: const Color(0xFFEAF2F4),
+          shape: BoxShape.circle,
+          border: Border.all(color: AppColors.cardBorder, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: enabled ? onTap : null,
+            child: Icon(icon, size: iconSize, color: AppColors.textDark),
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildAdvancedPanel() {
+    final bool isAvailable = _mediaState?['available'] == true;
+    final Map<String, dynamic>? ctrl = _mediaState?['controls'] as Map<String, dynamic>?;
+    final bool isShuffle = _mediaState?['shuffle'] == true;
+    final String repeat = _mediaState?['repeat'] as String? ?? 'none';
+    final bool isRepeatActive = repeat != 'none';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.cardInner,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.cardBorder, width: 1),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          // Shuffle
+          _buildAdvActionItem(
+            icon: Icons.shuffle_rounded,
+            label: 'Shuffle',
+            isActive: isShuffle,
+            enabled: isAvailable && (ctrl?['can_shuffle'] == true),
+            onTap: () => _sendMediaCommand('shuffle', !isShuffle),
+          ),
+          // Repeat
+          _buildAdvActionItem(
+            icon: repeat == 'track' ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+            label: repeat == 'track' ? '1 Track' : 'Repeat',
+            isActive: isRepeatActive,
+            enabled: isAvailable && (ctrl?['can_repeat'] == true),
+            onTap: () => _sendMediaCommand('repeat'),
+          ),
+          // Queue (Buka Session Switcher)
+          _buildAdvActionItem(
+            icon: Icons.queue_music_rounded,
+            label: 'Queue',
+            isActive: false,
+            enabled: true,
+            onTap: _showSessionSwitcherBottomSheet,
+          ),
+          // Speed
+          _buildAdvActionItem(
+            customWidget: Text(
+              '${_speedOptions[_currentSpeedIndex]}x',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textDark),
+            ),
+            label: 'Speed',
+            isActive: false,
+            enabled: isAvailable,
+            onTap: () {
+              setState(() {
+                _currentSpeedIndex = (_currentSpeedIndex + 1) % _speedOptions.length;
+              });
+              _sendMediaCommand('set_rate', _speedOptions[_currentSpeedIndex]);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdvActionItem({
+    IconData? icon,
+    Widget? customWidget,
+    required String label,
+    required bool isActive,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.35,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isActive ? AppColors.accentGreen : Colors.white,
+                  border: Border.all(color: isActive ? AppColors.accentGreen : AppColors.cardBorder),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.03),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: customWidget ??
+                      Icon(
+                        icon,
+                        size: 20,
+                        color: isActive ? Colors.white : AppColors.textDark,
+                      ),
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                label,
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdvancedToggleButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          setState(() {
+            _isAdvancedExpanded = !_isAdvancedExpanded;
+          });
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          height: 44,
+          decoration: BoxDecoration(
+            color: AppColors.cardInner,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.cardBorder, width: 1),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Kontrol Lanjutan',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textDark,
+                ),
+              ),
+              AnimatedRotation(
+                turns: _isAdvancedExpanded ? 0.5 : 0.0,
+                duration: const Duration(milliseconds: 250),
+                child: const Icon(Icons.keyboard_arrow_down_rounded, size: 22, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showSessionSwitcherBottomSheet() {
+    HapticFeedback.lightImpact();
+    final List<dynamic> sessions = _mediaState?['sessions'] as List<dynamic>? ?? [];
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Pilih Pemutar Media',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: AppColors.textDark),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Aplikasi yang sedang aktif memutar audio/video di PC:',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                if (sessions.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(
+                      child: Text('Tidak ada sesi media aktif.', style: TextStyle(color: AppColors.textSecondary)),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: sessions.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, idx) {
+                        final s = sessions[idx] as Map<String, dynamic>;
+                        final bool isCurrent = s['is_current'] == true;
+                        return InkWell(
+                          onTap: () {
+                            _sendMediaCommand('switch_session', s['id']);
+                            Navigator.pop(context);
+                          },
+                          borderRadius: BorderRadius.circular(14),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: isCurrent ? AppColors.accentGreen.withOpacity(0.08) : AppColors.cardInner,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: isCurrent ? AppColors.accentGreen : AppColors.cardBorder,
+                                width: isCurrent ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        s['app_name'] ?? 'Media',
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.textDark),
+                                      ),
+                                      Text(
+                                        s['process_name'] ?? 'Windows',
+                                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (isCurrent)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.accentGreen,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: const Text(
+                                      'Aktif',
+                                      style: TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _formatDuration(double totalSeconds) {
+    if (totalSeconds.isNaN || totalSeconds < 0) totalSeconds = 0;
+    final int minutes = totalSeconds ~/ 60;
+    final int seconds = (totalSeconds % 60).floor();
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
   // ---------- TAB 4: SHORTCUTS ----------
@@ -1848,10 +2474,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ---------- TAB 2: KEYBOARD HP (NATIVE BEHAVIOR) ----------
+  // ---------- TAB 2: KEYBOARD HP ----------
   Widget _buildKeyboardTab() {
     final bool isKeyboardOpen = _isSoftKeyboardVisible(context);
-    final bool isRealtime = _keyboardInputMode == KeyboardInputMode.realtime;
 
     return SafeArea(
       child: Center(
@@ -1886,36 +2511,34 @@ class _HomeScreenState extends State<HomeScreen> {
                           Container(
                             padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: isRealtime ? const Color(0xFFDCFCE7) : AppColors.keyOperator,
+                              color: AppColors.keyOperator,
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(color: AppColors.borderDark, width: 1.5),
                             ),
-                            child: Icon(
-                              isRealtime ? Icons.bolt_rounded : Icons.keyboard,
+                            child: const Icon(
+                              Icons.keyboard,
                               size: 20,
-                              color: isRealtime ? const Color(0xFF16A34A) : AppColors.textDark,
+                              color: AppColors.textDark,
                             ),
                           ),
                           const SizedBox(width: 10),
-                          Expanded(
+                          const Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  isRealtime ? 'KEYBOARD PC (REALTIME)' : 'KEYBOARD PC (BATCH)',
-                                  style: const TextStyle(
+                                  'KEYBOARD PC',
+                                  style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.bold,
                                     color: AppColors.textDark,
                                     letterSpacing: 0.8,
                                   ),
                                 ),
-                                const SizedBox(height: 2),
+                                SizedBox(height: 2),
                                 Text(
-                                  isRealtime
-                                      ? 'Ketik & geser spasi langsung bereaksi di PC'
-                                      : 'Ketik di HP, periksa, tekan Kirim ke PC',
-                                  style: const TextStyle(
+                                  'Ketik di HP, periksa, lalu tekan Kirim ke PC',
+                                  style: TextStyle(
                                     fontSize: 11,
                                     color: Color(0xFF6B7280),
                                   ),
@@ -1935,15 +2558,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                         ],
                       ),
-                      const SizedBox(height: 12),
-                      // Selector Mode: Batch vs Realtime
-                      _buildModeSelector(),
                       const SizedBox(height: 14),
-                      // Area Input sesuai mode
-                      if (_keyboardInputMode == KeyboardInputMode.batch)
-                        _buildBatchInputArea()
-                      else
-                        _buildRealtimeInputArea(),
+                      _buildKeyboardInputArea(),
                     ],
                   ),
                 ),
@@ -1962,14 +2578,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     icon: const Icon(Icons.keyboard_alt_outlined, size: 20),
-                    label: Text(
-                      isRealtime ? 'Buka Keyboard HP (Mode Realtime)' : 'Buka Keyboard HP (Mode Batch)',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    label: const Text(
+                      'Buka Keyboard HP',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ),
                   const SizedBox(height: 12),
                 ],
-                // Quick Keystrokes Box: Tab PC, Paste ke PC (Realtime), Enter PC
+                // Quick Keystrokes Box: Tab PC, Paste ke PC, Enter PC
                 Container(
                   decoration: BoxDecoration(
                     color: AppColors.housingBg,
@@ -1991,7 +2607,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: _buildQuickKeyBtn(
                           icon: Icons.content_paste_go,
                           label: 'Paste ke PC',
-                          onTap: _pasteToPcRealtime,
+                          onTap: _pasteToPc,
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -2013,109 +2629,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildModeSelector() {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFEAEFF5),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFCBD5E1), width: 1.5),
-      ),
-      padding: const EdgeInsets.all(3),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildModeTabItem(
-              mode: KeyboardInputMode.batch,
-              icon: Icons.notes_rounded,
-              title: 'Mode Batch',
-              desc: 'Ketik dulu, lalu kirim',
-            ),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: _buildModeTabItem(
-              mode: KeyboardInputMode.realtime,
-              icon: Icons.bolt_rounded,
-              title: 'Mode Realtime',
-              desc: 'Live typing ke PC',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildKeyboardInputArea() {
+    final bool hasLastSent =
+        _lastSentKeyboardText != null && _lastSentKeyboardText!.trim().isNotEmpty;
 
-  Widget _buildModeTabItem({
-    required KeyboardInputMode mode,
-    required IconData icon,
-    required String title,
-    required String desc,
-  }) {
-    final bool isSelected = _keyboardInputMode == mode;
-    return InkWell(
-      onTap: () => _switchKeyboardMode(mode),
-      borderRadius: BorderRadius.circular(9),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(9),
-          border: isSelected
-              ? Border.all(color: AppColors.borderDark, width: 1.5)
-              : Border.all(color: Colors.transparent, width: 1.5),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
-                    blurRadius: 4,
-                    offset: const Offset(0, 1.5),
-                  ),
-                ]
-              : null,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  icon,
-                  size: 15,
-                  color: isSelected
-                      ? (mode == KeyboardInputMode.realtime ? const Color(0xFF16A34A) : AppColors.textDark)
-                      : const Color(0xFF6B7280),
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                    color: isSelected ? AppColors.textDark : const Color(0xFF6B7280),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 1),
-            Text(
-              desc,
-              style: TextStyle(
-                fontSize: 9.5,
-                color: isSelected ? AppColors.textDark.withOpacity(0.7) : const Color(0xFF94A3B8),
-              ),
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBatchInputArea() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2199,151 +2716,63 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
-      ],
-    );
-  }
-
-  Widget _buildRealtimeInputArea() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Live stream status header
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF0FDF4),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFBBF7D0), width: 1.2),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF22C55E),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _lastRealtimeEventDesc,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF15803D),
+        if (hasLastSent) ...[
+          const SizedBox(height: 10),
+          // Tombol Isi Ulang Teks Terakhir (Zero PC side-effect, murni lokal di HP)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFCBD5E1), width: 1.2),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.history, size: 15, color: Color(0xFF64748B)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Terkirim: "${_lastSentKeyboardText!}"',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      color: Color(0xFF475569),
+                    ),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        // Live Text Field
-        TextField(
-          controller: _realtimeTextController,
-          focusNode: _realtimeFocusNode,
-          onTap: _openKeyboard,
-          maxLines: 4,
-          minLines: 2,
-          autocorrect: false,
-          enableSuggestions: false,
-          keyboardType: TextInputType.text,
-          textInputAction: TextInputAction.newline,
-          style: const TextStyle(
-            fontFamily: 'monospace',
-            color: AppColors.textDark,
-            fontSize: 14.5,
-            height: 1.35,
-          ),
-          decoration: InputDecoration(
-            hintText: 'Ketik di sini... Tombol, hapus, & geser spasi langsung bereaksi di PC.',
-            hintStyle: TextStyle(
-              color: AppColors.textDark.withOpacity(0.4),
-              fontSize: 12.5,
-            ),
-            filled: true,
-            fillColor: const Color(0xFFF8FAFC),
-            contentPadding: const EdgeInsets.all(12),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.borderDark, width: 1.8),
+                const SizedBox(width: 6),
+                InkWell(
+                  onTap: _recallLastSentText,
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: AppColors.borderDark, width: 1.2),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.replay_rounded, size: 13, color: AppColors.textDark),
+                        SizedBox(width: 4),
+                        Text(
+                          'Isi Ulang',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textDark,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-        const SizedBox(height: 10),
-        // Realtime actions: Backspace PC, Enter PC, Reset Layar HP
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  HapticFeedback.lightImpact();
-                  _sendKey('backspace');
-                },
-                style: OutlinedButton.styleFrom(
-                  backgroundColor: AppColors.keyDel.withOpacity(0.12),
-                  foregroundColor: const Color(0xFF991B1B),
-                  side: const BorderSide(color: Color(0xFFF87171), width: 1.4),
-                  padding: const EdgeInsets.symmetric(vertical: 9),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-                ),
-                icon: const Icon(Icons.backspace_outlined, size: 16),
-                label: const Text(
-                  'Backspace PC',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5),
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: () {
-                  HapticFeedback.lightImpact();
-                  _sendKey('enter');
-                },
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.keyEnter,
-                  foregroundColor: AppColors.textDark,
-                  side: const BorderSide(color: AppColors.borderDark, width: 1.4),
-                  padding: const EdgeInsets.symmetric(vertical: 9),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-                ),
-                icon: const Icon(Icons.keyboard_return, size: 16),
-                label: const Text(
-                  'Enter PC',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5),
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            OutlinedButton.icon(
-              onPressed: _resetRealtimeBuffer,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF475569),
-                side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.4),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-              ),
-              icon: const Icon(Icons.cleaning_services_outlined, size: 16),
-              label: const Text(
-                'Reset Layar',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 11.5),
-              ),
-            ),
-          ],
-        ),
+        ],
       ],
     );
   }

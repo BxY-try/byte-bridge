@@ -7,3 +7,11 @@ qrcode
 colorama
 pyperclip
 psutil
+winrt-runtime
+winrt-windows-media-control
+winrt-windows-foundation
+winrt-windows-foundation-collections
+winrt-windows-storage-streams
+winrt-windows-media
+pycaw
+comtypes

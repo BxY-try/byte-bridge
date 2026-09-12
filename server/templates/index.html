@@ -253,72 +253,458 @@
       grid-row: span 2;
     }
 
-    /* Tab 2: Media */
-    .media-container {
+    /* ================= TAB 2: MEDIA (Opsi 3 - One-Hand Friendly) ================= */
+    .media-screen-wrapper {
       display: flex;
       flex-direction: column;
-      gap: 16px;
-      justify-content: center;
-      flex: 1;
-      padding: 10px;
+      height: 100%;
+      max-width: 440px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 10px 14px 6px;
+      box-sizing: border-box;
+      overflow: hidden;
     }
 
-    .media-card {
+    .media-tab-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2px 4px 10px;
+    }
+
+    .media-tab-header h2 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--text-dark);
+      letter-spacing: -0.3px;
+    }
+
+    .media-header-icon {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s;
+    }
+
+    .media-card-main {
+      background: var(--bg-card);
+      border: 1.5px solid var(--border);
+      border-radius: 24px;
+      padding: 16px 14px 12px;
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Top Flexible Spacer - ini yang menyusut saat Kontrol Lanjutan membesar */
+    .media-flex-spacer {
+      flex: 1 1 auto;
+      min-height: 4px;
+      transition: flex-grow 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Media Info Card */
+    .media-info-card {
       background: var(--bg-secondary);
       border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 18px;
+      border-radius: 18px;
+      padding: 12px;
       display: flex;
       flex-direction: column;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .media-info-row {
+      display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 12px;
     }
 
-    .media-row {
+    .media-thumb-box {
+      width: 62px;
+      height: 62px;
+      border-radius: 12px;
+      background: var(--key-op);
       display: flex;
-      gap: 14px;
-      width: 100%;
+      align-items: center;
       justify-content: center;
+      overflow: hidden;
+      flex-shrink: 0;
+      border: 1px solid var(--border);
     }
 
-    .media-btn {
+    .media-thumb-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+
+    .media-thumb-fallback {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      font-size: 1.8rem;
+    }
+
+    .media-meta-box {
       flex: 1;
-      max-width: 90px;
-      height: 70px;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      color: var(--text-primary);
-      font-size: 1.6rem;
+      min-width: 0;
       display: flex;
       flex-direction: column;
+      gap: 2px;
+    }
+
+    .media-source-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      background: rgba(0,0,0,0.05);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      width: fit-content;
+      margin-bottom: 2px;
+      transition: background 0.15s;
+    }
+    .media-source-pill:hover, .media-source-pill:active {
+      background: rgba(0,0,0,0.09);
+    }
+
+    .media-source-pill strong {
+      color: var(--text-dark);
+      font-weight: 700;
+    }
+
+    .media-song-title {
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: var(--text-dark);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.25;
+    }
+
+    .media-artist-name {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Progress & Time */
+    .media-progress-box {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 2px;
+    }
+
+    .media-slider-input {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 6px;
+      border-radius: 6px;
+      background: #D5DFE3;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .media-slider-input::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #237C58;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+      transition: transform 0.1s;
+    }
+
+    .media-slider-input::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    .media-time-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    /* Volume Section */
+    .media-volume-section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      height: 46px;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .media-mute-icon-btn {
+      background: none;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      border-radius: 50%;
+      transition: transform 0.1s;
+    }
+    .media-mute-icon-btn:active {
+      transform: scale(0.9);
+    }
+
+    .media-vol-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      border-radius: 6px;
+      background: #D5DFE3;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .media-vol-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #237C58;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+    }
+
+    .media-vol-pct-text {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      min-width: 34px;
+      text-align: right;
+    }
+
+    /* Transport Controls */
+    .media-transport-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 22px;
+      margin-bottom: 14px;
+    }
+
+    .media-circle-btn {
+      width: 62px;
+      height: 62px;
+      border-radius: 50%;
+      background: #EAF2F4;
+      border: 1.5px solid var(--border);
+      color: var(--text-dark);
+      display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: all 0.1s;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+      transition: all 0.12s;
     }
 
-    .media-btn span {
-      font-size: 0.72rem;
-      color: var(--text-secondary);
-      margin-top: 4px;
-      font-weight: 500;
-    }
-
-    .media-btn:active {
+    .media-circle-btn:active {
       transform: scale(0.92);
-      background: var(--accent);
-      color: white;
+      background: var(--key-op);
     }
 
-    .media-btn.play-btn {
-      max-width: 95px;
-      height: 80px;
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
-      border: none;
-      font-size: 2rem;
-      box-shadow: 0 4px 18px var(--accent-glow);
+    .media-circle-btn.disabled, .media-circle-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      pointer-events: none;
     }
+
+    .media-play-circle-btn {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #278C64, #1B6547);
+      border: none;
+      color: #FFFFFF;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 6px 22px rgba(35, 124, 88, 0.4);
+      transition: all 0.12s;
+    }
+
+    .media-play-circle-btn:active {
+      transform: scale(0.92);
+      box-shadow: 0 2px 10px rgba(35, 124, 88, 0.3);
+    }
+
+    /* Advanced Panel Container (Animasi Collapsible via CSS Grid 0fr -> 1fr) */
+    .media-advanced-wrapper {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+      width: 100%;
+    }
+
+    .media-advanced-wrapper.expanded {
+      grid-template-rows: 1fr;
+    }
+
+    .media-advanced-inner {
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .media-advanced-grid {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 12px 8px;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .adv-action-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-dark);
+      padding: 4px 6px;
+      transition: transform 0.1s;
+    }
+
+    .adv-action-circle {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-dark);
+      font-weight: 700;
+      font-size: 0.88rem;
+      transition: all 0.15s;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+    }
+
+    .adv-action-item.active .adv-action-circle {
+      background: #237C58;
+      color: #FFFFFF;
+      border-color: #237C58;
+    }
+
+    .adv-action-item:active .adv-action-circle {
+      transform: scale(0.92);
+    }
+
+    .adv-action-item.disabled, .adv-action-item:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .adv-action-item span {
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    /* Fixed Anchor Toggle Button (Selalu di posisi paling bawah) */
+    .media-toggle-bar-btn {
+      width: 100%;
+      height: 44px;
+      border-radius: 16px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      color: var(--text-primary);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .media-toggle-bar-btn:active {
+      background: var(--key-op);
+    }
+
+    .media-chevron-svg {
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .media-chevron-svg.rotated {
+      transform: rotate(180deg);
+    }
+
+    /* Session Switcher Modal Item */
+    .session-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: all 0.15s;
+    }
+    .session-item-row:hover, .session-item-row:active {
+      background: var(--key-op);
+    }
+    .session-item-row.active {
+      border-color: #237C58;
+      background: rgba(35, 124, 88, 0.08);
+    }
+    .session-badge-cur {
+      font-size: 0.7rem;
+      background: #237C58;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
 
     /* Tab 3: Navigation / Presenter */
     .nav-container {
@@ -641,47 +1027,155 @@
       </div>
     </div>
 
-    <!-- TAB 2: MEDIA -->
+    <!-- TAB 2: MEDIA (Opsi 3 - Card Minimalis One-Hand Friendly) -->
     <div id="tab-media" class="tab-content">
-      <div class="media-container">
-        <!-- Volume Section -->
-        <div class="media-card">
-          <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px;">Volume PC</div>
-          <div class="media-row">
-            <button class="media-btn" onclick="sendKey('volumedown')">
-              🔉
-              <span>TURUN</span>
-            </button>
-            <button class="media-btn" onclick="sendKey('volumemute')">
-              🔇
-              <span>MUTE</span>
-            </button>
-            <button class="media-btn" onclick="sendKey('volumeup')">
-              🔊
-              <span>NAIK</span>
-            </button>
-          </div>
+      <div class="media-screen-wrapper">
+        <!-- Header -->
+        <div class="media-tab-header">
+          <h2>Media</h2>
+          <button class="media-header-icon" title="Placeholder">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </button>
         </div>
 
-        <!-- Playback Section -->
-        <div class="media-card">
-          <div style="font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px;">Kontrol Musik / Video</div>
-          <div class="media-row">
-            <button class="media-btn" onclick="sendKey('prevtrack')">
-              ⏮️
-              <span>PREV</span>
+        <!-- Container Card Utama Berorientasi Bawah dengan Spacer Fleksibel di Atas -->
+        <div class="media-card-main">
+          <!-- 1. Spacer Fleksibel di paling atas (menyusut saat Advanced Panel membesar) -->
+          <div class="media-flex-spacer"></div>
+
+          <!-- 2. Media Info Card -->
+          <div class="media-info-card">
+            <div class="media-info-row">
+              <div class="media-thumb-box">
+                <img id="mediaThumbImg" class="media-thumb-img" alt="Thumbnail">
+                <div id="mediaThumbFallback" class="media-thumb-fallback">🎵</div>
+              </div>
+              <div class="media-meta-box">
+                <div id="mediaSourceBtn" class="media-source-pill" onclick="openSessionSwitcher()" title="Beralih Session Pemutar Musik">
+                  <span id="mediaSourceText"><strong>YouTube</strong> · Chrome</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </div>
+                <div id="mediaSongTitle" class="media-song-title">Tidak Ada Media</div>
+                <div id="mediaArtistName" class="media-artist-name">Buka browser/pemutar musik di PC</div>
+              </div>
+            </div>
+
+            <!-- Progress Bar Slider & Time Labels -->
+            <div class="media-progress-box">
+              <input type="range" id="mediaSeekSlider" class="media-slider-input" min="0" max="100" value="0">
+              <div class="media-time-row">
+                <span id="mediaTimeCurrent">0:00</span>
+                <span id="mediaTimeTotal">0:00</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Volume Bar Horizontal dengan Icon Mute -->
+          <div class="media-volume-section">
+            <button id="mediaMuteBtn" class="media-mute-icon-btn" onclick="toggleMute()" title="Mute / Unmute">
+              <svg id="mediaMuteIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              </svg>
             </button>
-            <button class="media-btn play-btn" onclick="sendKey('playpause')">
-              ⏯️
+            <input type="range" id="mediaVolumeSlider" class="media-vol-slider" min="0" max="100" value="50">
+            <span id="mediaVolumeLabel" class="media-vol-pct-text">50%</span>
+          </div>
+
+          <!-- 4. Transport Controls: Prev / Play-Pause / Next -->
+          <div class="media-transport-row">
+            <button id="mediaPrevBtn" class="media-circle-btn" onclick="sendMediaCmd('previous')" title="Previous Track">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="19 20 9 12 19 4 19 20"></polygon>
+                <line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>
+              </svg>
             </button>
-            <button class="media-btn" onclick="sendKey('nexttrack')">
-              ⏭️
-              <span>NEXT</span>
+            <button id="mediaPlayBtn" class="media-play-circle-btn" onclick="sendMediaCmd('play_pause')" title="Play / Pause">
+              <svg id="mediaPlaySvg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+            </button>
+            <button id="mediaNextBtn" class="media-circle-btn" onclick="sendMediaCmd('next')" title="Next Track">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 4 15 12 5 20 5 4"></polygon>
+                <line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"></line>
+              </svg>
             </button>
           </div>
+
+          <!-- 5. Advanced Panel (Animasi Collapsible via CSS Grid di atas Toggle Button) -->
+          <div id="mediaAdvancedWrapper" class="media-advanced-wrapper">
+            <div class="media-advanced-inner">
+              <div class="media-advanced-grid">
+                <!-- Shuffle -->
+                <button id="mediaShuffleBtn" class="adv-action-item" onclick="toggleShuffle()" title="Shuffle">
+                  <div class="adv-action-circle">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="16 3 21 3 21 8"></polyline>
+                      <line x1="4" y1="20" x2="21" y2="3"></line>
+                      <polyline points="21 16 21 21 16 21"></polyline>
+                      <line x1="15" y1="15" x2="21" y2="21"></line>
+                      <line x1="4" y1="4" x2="9" y2="9"></line>
+                    </svg>
+                  </div>
+                  <span>Shuffle</span>
+                </button>
+
+                <!-- Repeat -->
+                <button id="mediaRepeatBtn" class="adv-action-item" onclick="toggleRepeat()" title="Repeat">
+                  <div class="adv-action-circle">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="17 1 21 5 17 9"></polyline>
+                      <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+                      <polyline points="7 23 3 19 7 15"></polyline>
+                      <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                    </svg>
+                  </div>
+                  <span id="repeatLabelText">Repeat</span>
+                </button>
+
+                <!-- Queue / Session Switcher -->
+                <button id="mediaQueueBtn" class="adv-action-item" onclick="openSessionSwitcher()" title="Queue / Sesi Aktif">
+                  <div class="adv-action-circle">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="8" y1="6" x2="21" y2="6"></line>
+                      <line x1="8" y1="12" x2="21" y2="12"></line>
+                      <line x1="8" y1="18" x2="21" y2="18"></line>
+                      <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                      <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                      <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                    </svg>
+                  </div>
+                  <span>Queue</span>
+                </button>
+
+                <!-- Speed -->
+                <button id="mediaSpeedBtn" class="adv-action-item" onclick="cyclePlaybackRate()" title="Playback Speed">
+                  <div class="adv-action-circle">
+                    <span id="mediaSpeedBadge">1x</span>
+                  </div>
+                  <span>Speed</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 6. Toggle Button (Anchor Point tetap di bagian bawah) -->
+          <button class="media-toggle-bar-btn" onclick="toggleAdvancedPanel()">
+            <span>Kontrol Lanjutan</span>
+            <svg id="mediaChevronSvg" class="media-chevron-svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>
+          </button>
         </div>
       </div>
     </div>
+
 
     <!-- TAB 3: NAVIGATION & PRESENTATION -->
     <div id="tab-nav" class="tab-content">
@@ -697,16 +1191,49 @@
         <!-- D-Pad Directional -->
         <div class="dpad-grid">
           <div></div>
-          <button class="dpad-btn" onclick="sendKey('up')">▲</button>
+          <button class="dpad-btn"
+                  onmousedown="startArrowRepeating('up', event)"
+                  onmouseup="stopArrowRepeating()"
+                  onmouseleave="stopArrowRepeating()"
+                  ontouchstart="startArrowRepeating('up', event)"
+                  ontouchend="stopArrowRepeating()"
+                  ontouchcancel="stopArrowRepeating()">▲</button>
           <div></div>
 
-          <button class="dpad-btn" onclick="sendKey('left')">◀</button>
-          <button class="dpad-btn" style="background:var(--accent);border:none;font-size:1.1rem;" onclick="sendKey('enter')">OK</button>
-          <button class="dpad-btn" onclick="sendKey('right')">▶</button>
+          <button class="dpad-btn"
+                  onmousedown="startArrowRepeating('left', event)"
+                  onmouseup="stopArrowRepeating()"
+                  onmouseleave="stopArrowRepeating()"
+                  ontouchstart="startArrowRepeating('left', event)"
+                  ontouchend="stopArrowRepeating()"
+                  ontouchcancel="stopArrowRepeating()">◀</button>
+          <button class="dpad-btn" style="background:var(--key-enter);border:none;font-size:1.1rem;font-weight:bold;" onclick="sendKey('enter')">OK</button>
+          <button class="dpad-btn"
+                  onmousedown="startArrowRepeating('right', event)"
+                  onmouseup="stopArrowRepeating()"
+                  onmouseleave="stopArrowRepeating()"
+                  ontouchstart="startArrowRepeating('right', event)"
+                  ontouchend="stopArrowRepeating()"
+                  ontouchcancel="stopArrowRepeating()">▶</button>
 
-          <div></div>
-          <button class="dpad-btn" onclick="sendKey('down')">▼</button>
-          <div></div>
+          <button class="dpad-btn" style="background:var(--key-del);color:white;font-size:1.4rem;"
+                  onmousedown="startDeleteRepeating(event)"
+                  onmouseup="stopDeleteRepeating()"
+                  onmouseleave="stopDeleteRepeating()"
+                  ontouchstart="startDeleteRepeating(event)"
+                  ontouchend="stopDeleteRepeating()"
+                  ontouchcancel="stopDeleteRepeating()"
+                  title="Backspace">⌫</button>
+          <button class="dpad-btn"
+                  onmousedown="startArrowRepeating('down', event)"
+                  onmouseup="stopArrowRepeating()"
+                  onmouseleave="stopArrowRepeating()"
+                  ontouchstart="startArrowRepeating('down', event)"
+                  ontouchend="stopArrowRepeating()"
+                  ontouchcancel="stopArrowRepeating()">▼</button>
+          <button class="dpad-btn" style="background:var(--key-op);color:var(--text-dark);font-size:1rem;font-weight:bold;"
+                  onclick="sendKey('del')"
+                  title="Delete Forward">Del</button>
         </div>
 
         <!-- Page Up / Down -->
@@ -754,7 +1281,14 @@
         <div class="text-sender-box">
           <div style="font-size: 0.85rem; color: var(--text-secondary); font-weight:600;">Kirim Teks ke Window Aktif PC:</div>
           <textarea id="pcTextInput" class="text-input" placeholder="Ketik teks atau tempel link di sini..."></textarea>
-          <button class="send-text-btn" onclick="submitTextInput()">Kirim Teks ke PC</button>
+          <div style="display:flex; gap:8px;">
+            <button class="send-text-btn" style="flex:1;" onclick="submitTextInput()">Kirim Teks ke PC</button>
+            <button class="key-btn fn" style="padding:0 14px; margin:0;" onclick="clearTextInput()">Hapus</button>
+          </div>
+          <div id="recallBox" style="display:none; margin-top:4px; background:rgba(0,0,0,0.04); border:1px solid var(--border); border-radius:8px; padding:6px 10px; font-size:0.8rem; align-items:center; justify-content:space-between;">
+            <span id="recallPreview" style="color:var(--text-secondary); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:200px;"></span>
+            <button onclick="recallLastSentText()" style="background:#fff; border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:0.75rem; font-weight:bold; cursor:pointer; color:var(--text-primary);">Isi Ulang</button>
+          </div>
         </div>
       </div>
     </div>
@@ -796,6 +1330,24 @@
       </div>
     </div>
   </div>
+
+  <!-- Session Switcher Modal -->
+  <div id="sessionSwitcherModal" class="modal-overlay">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h3 style="font-size:1.1rem; color:var(--text-dark);">Pilih Pemutar Media</h3>
+        <button onclick="closeSessionSwitcher()" style="background:none; border:none; font-size:1.2rem; cursor:pointer; color:var(--text-secondary);">✕</button>
+      </div>
+      <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:12px;">Aplikasi yang sedang aktif memutar audio/video di Windows:</p>
+      <div id="sessionListContainer" style="max-height: 240px; overflow-y: auto; margin-bottom: 12px;">
+        <!-- Diisi otomatis oleh renderSessionList() -->
+      </div>
+      <div class="modal-btns">
+        <button class="btn-cancel" style="width:100%;" onclick="closeSessionSwitcher()">Tutup</button>
+      </div>
+    </div>
+  </div>
+
 
   <!-- Socket.IO Client (Disajikan otomatis oleh python-socketio) -->
   <script src="/socket.io/socket.io.js"></script>
@@ -843,7 +1395,278 @@
         statusBadge.className = 'status-badge disconnected';
         statusText.textContent = 'Mencoba lagi...';
       });
+
+      // Menerima sinkronisasi state media dua arah dari Windows GSMTC
+      socket.on('media_state', (data) => {
+        updateMediaStateUI(data);
+      });
     }
+
+    // ==========================================
+    // LOGIKA MEDIA CONTROLLER DUA ARAH (GSMTC)
+    // ==========================================
+    let currentMediaState = null;
+    let cachedThumbnailUri = '';
+    let cachedThumbnailHash = '';
+    let serverPosition = 0;
+    let serverDuration = 0;
+    let playbackRate = 1.0;
+    let playbackStatus = 'paused';
+    let lastSyncTime = performance.now();
+    let isUserSeeking = false;
+    let isUserChangingVolume = false;
+    let isAdvancedExpanded = false;
+    const speedOptions = [0.75, 1.0, 1.25, 1.5, 2.0];
+    let currentSpeedIdx = 1;
+
+    // Elemen DOM Media
+    const mediaThumbImg = document.getElementById('mediaThumbImg');
+    const mediaThumbFallback = document.getElementById('mediaThumbFallback');
+    const mediaSourceText = document.getElementById('mediaSourceText');
+    const mediaSongTitle = document.getElementById('mediaSongTitle');
+    const mediaArtistName = document.getElementById('mediaArtistName');
+    const mediaSeekSlider = document.getElementById('mediaSeekSlider');
+    const mediaTimeCurrent = document.getElementById('mediaTimeCurrent');
+    const mediaTimeTotal = document.getElementById('mediaTimeTotal');
+    const mediaVolumeSlider = document.getElementById('mediaVolumeSlider');
+    const mediaVolumeLabel = document.getElementById('mediaVolumeLabel');
+    const mediaMuteIcon = document.getElementById('mediaMuteIcon');
+    const mediaPrevBtn = document.getElementById('mediaPrevBtn');
+    const mediaPlayBtn = document.getElementById('mediaPlayBtn');
+    const mediaPlaySvg = document.getElementById('mediaPlaySvg');
+    const mediaNextBtn = document.getElementById('mediaNextBtn');
+    const mediaShuffleBtn = document.getElementById('mediaShuffleBtn');
+    const mediaRepeatBtn = document.getElementById('mediaRepeatBtn');
+    const mediaSpeedBadge = document.getElementById('mediaSpeedBadge');
+    const mediaAdvancedWrapper = document.getElementById('mediaAdvancedWrapper');
+    const mediaChevronSvg = document.getElementById('mediaChevronSvg');
+
+    function formatTime(sec) {
+      if (isNaN(sec) || sec < 0) sec = 0;
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function sendMediaCmd(action, value = null) {
+      triggerHaptic(20);
+      if (socket && socket.connected) {
+        socket.emit('media_command', { action: action, value: value });
+      } else {
+        // Fallback offline key
+        sendKey(action === 'play_pause' ? 'playpause' : (action === 'next' ? 'nexttrack' : 'prevtrack'));
+      }
+    }
+
+    function updateMediaStateUI(data) {
+      if (!data) return;
+      currentMediaState = data;
+
+      // 1. Thumbnail Caching (Hemat Bandwidth 99.8%)
+      if (data.thumbnail) {
+        cachedThumbnailUri = data.thumbnail;
+        cachedThumbnailHash = data.thumbnail_hash || '';
+        mediaThumbImg.src = cachedThumbnailUri;
+        mediaThumbImg.style.display = 'block';
+        mediaThumbFallback.style.display = 'none';
+      } else if (data.thumbnail_hash && data.thumbnail_hash === cachedThumbnailHash && cachedThumbnailUri) {
+        mediaThumbImg.src = cachedThumbnailUri;
+        mediaThumbImg.style.display = 'block';
+        mediaThumbFallback.style.display = 'none';
+      } else if (!data.available) {
+        mediaThumbImg.style.display = 'none';
+        mediaThumbFallback.style.display = 'flex';
+      }
+
+      // 2. Metadata Track
+      if (data.available && data.title) {
+        mediaSongTitle.textContent = data.title;
+        mediaArtistName.textContent = data.artist || (data.album || 'Unknown Artist');
+        const app = data.app_name || 'Media';
+        const proc = data.process_name || 'PC';
+        mediaSourceText.innerHTML = `<strong>${app}</strong> · ${proc}`;
+      } else {
+        mediaSongTitle.textContent = 'Tidak Ada Media';
+        mediaArtistName.textContent = 'Putar musik/video di PC untuk mengontrol';
+        mediaSourceText.innerHTML = `<strong>PC Audio</strong> · Windows`;
+      }
+
+      // 3. Timeline & Interpolasi
+      serverPosition = data.position || 0;
+      serverDuration = data.duration || 0;
+      playbackRate = data.playback_rate || 1.0;
+      playbackStatus = data.status || 'paused';
+      lastSyncTime = performance.now();
+
+      mediaSeekSlider.max = serverDuration > 0 ? serverDuration : 100;
+      if (!isUserSeeking) {
+        mediaSeekSlider.value = serverPosition;
+        mediaTimeCurrent.textContent = formatTime(serverPosition);
+      }
+      mediaTimeTotal.textContent = formatTime(serverDuration);
+
+      // 4. Volume & Mute
+      if (!isUserChangingVolume && typeof data.volume === 'number') {
+        mediaVolumeSlider.value = data.volume;
+        mediaVolumeLabel.textContent = data.volume + '%';
+      }
+      renderMuteState(data.is_muted);
+
+      // 5. Play/Pause Button Icon
+      if (playbackStatus === 'playing') {
+        mediaPlaySvg.innerHTML = '<rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect>';
+      } else {
+        mediaPlaySvg.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+      }
+
+      // 6. Grey-out Kapabilitas Kontrol
+      const ctrl = data.controls || {};
+      const isAvail = !!data.available;
+
+      setControlEnabled(mediaPrevBtn, isAvail && ctrl.can_previous);
+      setControlEnabled(mediaNextBtn, isAvail && ctrl.can_next);
+      setControlEnabled(mediaPlayBtn, isAvail && (ctrl.can_play || ctrl.can_pause));
+      setControlEnabled(mediaSeekSlider, isAvail && ctrl.can_seek);
+      setControlEnabled(mediaShuffleBtn, isAvail && ctrl.can_shuffle);
+      setControlEnabled(mediaRepeatBtn, isAvail && ctrl.can_repeat);
+
+      // Status Shuffle & Repeat
+      mediaShuffleBtn.classList.toggle('active', !!data.shuffle);
+      mediaRepeatBtn.classList.toggle('active', data.repeat && data.repeat !== 'none');
+      document.getElementById('repeatLabelText').textContent = (data.repeat === 'track') ? '1 Track' : 'Repeat';
+
+      // Speed Badge
+      if (typeof data.playback_rate === 'number') {
+        mediaSpeedBadge.textContent = data.playback_rate + 'x';
+        const matchIdx = speedOptions.indexOf(data.playback_rate);
+        if (matchIdx !== -1) currentSpeedIdx = matchIdx;
+      }
+
+      // Render Session Switcher List
+      renderSessionList(data.sessions || []);
+    }
+
+    function setControlEnabled(btn, enabled) {
+      if (!btn) return;
+      if (enabled) {
+        btn.classList.remove('disabled');
+        btn.removeAttribute('disabled');
+      } else {
+        btn.classList.add('disabled');
+        btn.setAttribute('disabled', 'true');
+      }
+    }
+
+    function renderMuteState(isMuted) {
+      if (!mediaMuteIcon) return;
+      if (isMuted) {
+        mediaMuteIcon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>';
+      } else {
+        mediaMuteIcon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>';
+      }
+    }
+
+    // Client-side progress bar interpolation (halus 60 FPS tanpa spam websocket)
+    function loopProgressInterpolation() {
+      if (playbackStatus === 'playing' && !isUserSeeking && serverDuration > 0) {
+        const elapsed = (performance.now() - lastSyncTime) / 1000.0;
+        const cur = Math.min(serverDuration, serverPosition + elapsed * playbackRate);
+        mediaSeekSlider.value = cur;
+        mediaTimeCurrent.textContent = formatTime(cur);
+      }
+      requestAnimationFrame(loopProgressInterpolation);
+    }
+    requestAnimationFrame(loopProgressInterpolation);
+
+    // Seek Slider Event (HANYA kirim saat user melepas slider)
+    mediaSeekSlider.addEventListener('input', () => {
+      isUserSeeking = true;
+      mediaTimeCurrent.textContent = formatTime(mediaSeekSlider.value);
+    });
+    mediaSeekSlider.addEventListener('change', () => {
+      isUserSeeking = false;
+      sendMediaCmd('seek', parseFloat(mediaSeekSlider.value));
+    });
+
+    // Volume Slider Event
+    mediaVolumeSlider.addEventListener('input', () => {
+      isUserChangingVolume = true;
+      mediaVolumeLabel.textContent = mediaVolumeSlider.value + '%';
+    });
+    mediaVolumeSlider.addEventListener('change', () => {
+      isUserChangingVolume = false;
+      sendMediaCmd('set_volume', parseInt(mediaVolumeSlider.value, 10));
+    });
+
+    function toggleMute() {
+      sendMediaCmd('toggle_mute');
+    }
+
+    function toggleShuffle() {
+      const cur = currentMediaState ? !!currentMediaState.shuffle : false;
+      sendMediaCmd('shuffle', !cur);
+    }
+
+    function toggleRepeat() {
+      sendMediaCmd('repeat');
+    }
+
+    function cyclePlaybackRate() {
+      currentSpeedIdx = (currentSpeedIdx + 1) % speedOptions.length;
+      const targetRate = speedOptions[currentSpeedIdx];
+      sendMediaCmd('set_rate', targetRate);
+    }
+
+    function toggleAdvancedPanel() {
+      triggerHaptic(20);
+      isAdvancedExpanded = !isAdvancedExpanded;
+      if (isAdvancedExpanded) {
+        mediaAdvancedWrapper.classList.add('expanded');
+        mediaChevronSvg.classList.add('rotated');
+      } else {
+        mediaAdvancedWrapper.classList.remove('expanded');
+        mediaChevronSvg.classList.remove('rotated');
+      }
+    }
+
+    // Session Switcher Modal
+    function openSessionSwitcher() {
+      triggerHaptic(20);
+      const modal = document.getElementById('sessionSwitcherModal');
+      if (modal) modal.classList.add('open');
+    }
+
+    function closeSessionSwitcher() {
+      const modal = document.getElementById('sessionSwitcherModal');
+      if (modal) modal.classList.remove('open');
+    }
+
+    function renderSessionList(sessions) {
+      const container = document.getElementById('sessionListContainer');
+      if (!container) return;
+      if (!sessions || sessions.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-secondary); font-size:0.85rem; padding:8px;">Tidak ada session pemutar aktif.</p>';
+        return;
+      }
+      container.innerHTML = '';
+      sessions.forEach(s => {
+        const div = document.createElement('div');
+        div.className = 'session-item-row' + (s.is_current ? ' active' : '');
+        div.onclick = () => {
+          sendMediaCmd('switch_session', s.id);
+          closeSessionSwitcher();
+        };
+        div.innerHTML = `
+          <div>
+            <div style="font-weight:700; font-size:0.9rem; color:var(--text-dark);">${s.app_name}</div>
+            <div style="font-size:0.75rem; color:var(--text-secondary);">${s.process_name}</div>
+          </div>
+          ${s.is_current ? '<span class="session-badge-cur">Aktif</span>' : ''}
+        `;
+        container.appendChild(div);
+      });
+    }
+
 
     // Action Emitters
     function sendKey(key) {
@@ -910,6 +1733,8 @@
       }
     }
 
+    let lastSentText = '';
+
     function submitTextInput() {
       const input = document.getElementById('pcTextInput');
       const text = input.value;
@@ -917,7 +1742,33 @@
       triggerHaptic(30);
       if (socket && socket.connected) {
         socket.emit('text_input', { text: text });
+        lastSentText = text;
         input.value = '';
+        updateRecallBox();
+      }
+    }
+
+    function clearTextInput() {
+      triggerHaptic(15);
+      const input = document.getElementById('pcTextInput');
+      input.value = '';
+      input.focus();
+    }
+
+    function recallLastSentText() {
+      if (!lastSentText) return;
+      triggerHaptic(20);
+      const input = document.getElementById('pcTextInput');
+      input.value = lastSentText;
+      input.focus();
+    }
+
+    function updateRecallBox() {
+      const box = document.getElementById('recallBox');
+      const preview = document.getElementById('recallPreview');
+      if (box && preview && lastSentText) {
+        preview.textContent = 'Terkirim: "' + lastSentText + '"';
+        box.style.display = 'flex';
       }
     }
 

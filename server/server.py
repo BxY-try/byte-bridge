@@ -16,7 +16,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import eventlet
-eventlet.monkey_patch()
+eventlet.monkey_patch(thread=False)
 
 import io
 import json
@@ -34,13 +34,21 @@ if sys.platform.startswith("win"):
     except Exception:
         pass
 
+import atexit
+import queue
 from flask import Flask, jsonify, render_template, send_from_directory
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, emit
 import pyautogui
 import pyperclip
 import qrcode
 import psutil
 import ipaddress
+
+# Import MediaManager
+try:
+    from media_manager import MediaManager
+except ImportError:
+    from server.media_manager import MediaManager
 
 # ---------- Konfigurasi ----------
 TCP_PORT = 8080
@@ -61,6 +69,42 @@ app.config["SECRET_KEY"] = "bytebridge_secret_key"
 
 # Inisialisasi SocketIO (menggunakan eventlet secara otomatis)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Inisialisasi MediaManager (GSMTC + pycaw)
+media_manager = MediaManager()
+
+def media_event_dispatcher():
+    """
+    Consumer greenlet yang membaca antrean MediaManager dan memancarkan media_state ke Socket.IO.
+    Menerapkan Conflation (latest-write-wins): jika beberapa event menumpuk (misal scrubbing seek bar),
+    semua event lama dikuras dan hanya state paling mutakhir yang dipancarkan ke client.
+    """
+    while getattr(media_manager, "_running", True):
+        latest_state = None
+        try:
+            while not media_manager.state_queue.empty():
+                latest_state = media_manager.state_queue.get_nowait()
+        except queue.Empty:
+            pass
+        except Exception as e:
+            print(f"[MediaDispatcher] Error saat drain queue: {e}")
+
+        if latest_state is not None:
+            try:
+                socketio.emit("media_state", latest_state)
+            except Exception as e:
+                print(f"[MediaDispatcher] Error saat emit media_state: {e}")
+
+        socketio.sleep(0.03)
+
+def cleanup_media():
+    if media_manager:
+        media_manager.close()
+
+atexit.register(cleanup_media)
+
+atexit.register(cleanup_media)
+
 
 
 def get_network_details():
@@ -188,6 +232,29 @@ def on_connect():
     global connected_clients
     connected_clients += 1
     print(f"[Koneksi] Client terhubung! Total klien aktif: {connected_clients}")
+    # Kirim initial media_state secara lengkap (termasuk thumbnail jika ada)
+    try:
+        cur_state = media_manager.get_current_state()
+        emit("media_state", cur_state)
+    except Exception as e:
+        print(f"[Koneksi] Gagal kirim initial media_state: {e}")
+
+
+@socketio.on("media_command")
+def on_media_command(data):
+    """
+    Menangani perintah kontrol media dua arah:
+    Payload: {"action": "play_pause"|"play"|"pause"|"next"|"previous"|"seek"|"shuffle"|"repeat"|"set_rate"|"switch_session"|"set_volume"|"toggle_mute", "value": ...}
+    """
+    action = (data or {}).get("action")
+    value = (data or {}).get("value")
+    if not action:
+        return
+    print(f"[MediaCommand] Action: {action}, Value: {value}")
+    try:
+        media_manager.handle_command(action, value)
+    except Exception as e:
+        print(f"[MediaCommand] Gagal handle command '{action}': {e}")
 
 
 @socketio.on("disconnect")
@@ -215,8 +282,8 @@ def on_keypress(data):
                 pyautogui.press('%')
             except Exception:
                 pyautogui.hotkey('shift', '5')
-        elif key == 'del':
-            pyautogui.press('backspace')
+        elif key in ('del', 'delete'):
+            pyautogui.press('delete')
         else:
             pyautogui.press(key)
     except Exception as e:
@@ -353,9 +420,13 @@ if __name__ == "__main__":
     # Jalankan thread UDP Broadcaster untuk discovery aplikasi Flutter
     threading.Thread(target=udp_broadcaster, daemon=True).start()
 
+    # Jalankan background greenlet dispatcher untuk sinkronisasi state media
+    socketio.start_background_task(media_event_dispatcher)
+
     primary_ip = get_primary_ip()
     all_ips = get_all_local_ips()
     print_banner(primary_ip, all_ips)
 
     # Jalankan server Socket.IO + Flask
     socketio.run(app, host="0.0.0.0", port=TCP_PORT)
+

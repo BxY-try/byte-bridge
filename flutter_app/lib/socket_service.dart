@@ -2,6 +2,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 
 class SocketService {
   io.Socket? _socket;
+  void Function(Map<String, dynamic> data)? onMediaState;
 
   void connect({
     required String ip,
@@ -9,7 +10,9 @@ class SocketService {
     required void Function() onConnect,
     required void Function() onDisconnect,
     required void Function(dynamic error) onError,
+    void Function(Map<String, dynamic> data)? onMediaState,
   }) {
+    this.onMediaState = onMediaState;
     _socket?.dispose();
 
     _socket = io.io(
@@ -28,6 +31,21 @@ class SocketService {
     _socket!.onDisconnect((_) => onDisconnect());
     _socket!.onConnectError((err) => onError(err));
     _socket!.onError((err) => onError(err));
+
+    _socket!.on('media_state', (data) {
+      if (data != null && data is Map) {
+        final Map<String, dynamic> map = Map<String, dynamic>.from(data);
+        this.onMediaState?.call(map);
+      }
+    });
+  }
+
+  void sendMediaCommand(String action, [dynamic value]) {
+    final Map<String, dynamic> payload = {'action': action};
+    if (value != null) {
+      payload['value'] = value;
+    }
+    _socket?.emit('media_command', payload);
   }
 
   void sendKey(String key) {
