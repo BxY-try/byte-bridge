@@ -209,6 +209,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openKeyboard() {
+    _keyboardFocusNode.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _keyboardFocusNode.requestFocus();
+        SystemChannels.textInput.invokeMethod('TextInput.show');
+      }
+    });
+  }
+
   void _sendKey(String key) {
     HapticFeedback.lightImpact();
     _socketService.sendKey(key);
@@ -474,7 +484,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     setState(() => _currentTabIndex = idx);
                     if (idx == 1) {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
-                        _keyboardFocusNode.requestFocus();
+                        _openKeyboard();
                       });
                     } else {
                       _keyboardFocusNode.unfocus();
@@ -1695,6 +1705,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       TextField(
                         controller: _keyboardTextController,
                         focusNode: _keyboardFocusNode,
+                        onTap: _openKeyboard,
                         maxLines: 4,
                         minLines: 2,
                         textInputAction: TextInputAction.send,
@@ -1778,9 +1789,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 // Tombol Buka Keyboard jika tertutup
                 if (!isKeyboardOpen) ...[
                   OutlinedButton.icon(
-                    onPressed: () {
-                      _keyboardFocusNode.requestFocus();
-                    },
+                    onPressed: _openKeyboard,
                     style: OutlinedButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: AppColors.textDark,
@@ -1798,7 +1807,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                // Quick Keystrokes Box (Enter, Backspace, Spasi, Paste PC)
+                // Quick Keystrokes Box (Paste PC di kiri, Enter PC di kanan)
                 Container(
                   decoration: BoxDecoration(
                     color: AppColors.housingBg,
@@ -1810,33 +1819,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Expanded(
                         child: _buildQuickKeyBtn(
-                          icon: Icons.keyboard_return,
-                          label: 'Enter',
-                          onTap: () => _sendKey('enter'),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: _buildQuickKeyBtn(
-                          icon: Icons.backspace_outlined,
-                          label: 'Backspace',
-                          onTap: () => _sendKey('backspace'),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: _buildQuickKeyBtn(
-                          icon: Icons.space_bar,
-                          label: 'Spasi',
-                          onTap: () => _sendKey('space'),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: _buildQuickKeyBtn(
                           icon: Icons.content_paste,
                           label: 'Paste PC',
                           onTap: () => _sendHotkey(['ctrl', 'v']),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildQuickKeyBtn(
+                          icon: Icons.keyboard_return,
+                          label: 'Enter PC',
+                          onTap: () => _sendKey('enter'),
                         ),
                       ),
                     ],
