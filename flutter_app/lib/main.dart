@@ -219,6 +219,67 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _pasteToPcRealtime() async {
+    HapticFeedback.lightImpact();
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text;
+      if (text != null && text.isNotEmpty) {
+        _sendTextInput(text);
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: AppColors.keyEnter, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Clipboard HP ter-paste ke PC: "$text"',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+              duration: const Duration(milliseconds: 1500),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: AppColors.borderDark,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        }
+        return;
+      }
+    } catch (_) {}
+
+    // Fallback jika clipboard HP kosong, kirim pintasan Ctrl+V ke PC
+    _sendHotkey(['ctrl', 'v']);
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.info_outline, color: AppColors.keyOperator, size: 18),
+              SizedBox(width: 8),
+              Text(
+                'Menjalankan Paste (Ctrl+V) di PC',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ],
+          ),
+          duration: const Duration(milliseconds: 1500),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppColors.borderDark,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
+  }
+
   void _sendKey(String key) {
     HapticFeedback.lightImpact();
     _socketService.sendKey(key);
@@ -1807,7 +1868,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 12),
                 ],
-                // Quick Keystrokes Box (Paste PC di kiri, Enter PC di kanan)
+                // Quick Keystrokes Box: Tab PC, Paste ke PC (Realtime), Enter PC
                 Container(
                   decoration: BoxDecoration(
                     color: AppColors.housingBg,
@@ -1819,12 +1880,20 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Expanded(
                         child: _buildQuickKeyBtn(
-                          icon: Icons.content_paste,
-                          label: 'Paste PC',
-                          onTap: () => _sendHotkey(['ctrl', 'v']),
+                          icon: Icons.keyboard_tab,
+                          label: 'Tab PC',
+                          onTap: () => _sendKey('tab'),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: _buildQuickKeyBtn(
+                          icon: Icons.content_paste_go,
+                          label: 'Paste ke PC',
+                          onTap: _pasteToPcRealtime,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
                       Expanded(
                         child: _buildQuickKeyBtn(
                           icon: Icons.keyboard_return,
