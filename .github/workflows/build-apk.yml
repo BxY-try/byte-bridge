@@ -43,6 +43,19 @@ jobs:
           content = content.replace('<application', perms + '    <application android:usesCleartextTraffic=\"true\"')
           with open(p, 'w') as f: f.write(content)
           print('Patched AndroidManifest.xml successfully')
+
+          with open('android/app/proguard-rules.pro', 'w') as f:
+              f.write('-keep class com.google.mlkit.** { *; }\n-dontwarn com.google.mlkit.**\n-dontwarn **\n')
+          print('Created proguard-rules.pro successfully')
+
+          import os
+          for path in ['android/app/build.gradle.kts', 'android/app/build.gradle']:
+              if os.path.exists(path):
+                  with open(path, 'r') as f: c = f.read()
+                  c = c.replace('signingConfig = signingConfigs.getByName("debug")', 'signingConfig = signingConfigs.getByName("debug")\n            isMinifyEnabled = false\n            isShrinkResources = false')
+                  c = c.replace('signingConfig signingConfigs.debug', 'signingConfig signingConfigs.debug\n            minifyEnabled false\n            shrinkResources false')
+                  with open(path, 'w') as f: f.write(c)
+                  print(f'Patched {path} successfully')
           "
 
       - name: Install dependencies
