@@ -3,6 +3,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 class SocketService {
   io.Socket? _socket;
   void Function(Map<String, dynamic> data)? onMediaState;
+  void Function(Map<String, dynamic> data)? onAiResponse;
 
   void connect({
     required String ip,
@@ -11,8 +12,10 @@ class SocketService {
     required void Function() onDisconnect,
     required void Function(dynamic error) onError,
     void Function(Map<String, dynamic> data)? onMediaState,
+    void Function(Map<String, dynamic> data)? onAiResponse,
   }) {
     this.onMediaState = onMediaState;
+    this.onAiResponse = onAiResponse;
     _socket?.dispose();
 
     _socket = io.io(
@@ -36,6 +39,13 @@ class SocketService {
       if (data != null && data is Map) {
         final Map<String, dynamic> map = Map<String, dynamic>.from(data);
         this.onMediaState?.call(map);
+      }
+    });
+
+    _socket!.on('ai_response', (data) {
+      if (data != null && data is Map) {
+        final Map<String, dynamic> map = Map<String, dynamic>.from(data);
+        this.onAiResponse?.call(map);
       }
     });
   }
@@ -70,6 +80,14 @@ class SocketService {
 
   void sendTextInput(String text) {
     _socket?.emit('text_input', {'text': text});
+  }
+
+  void sendAiQuery({String? text, String? imageBase64, String? prompt}) {
+    final Map<String, dynamic> payload = {};
+    if (text != null && text.isNotEmpty) payload['text'] = text;
+    if (imageBase64 != null && imageBase64.isNotEmpty) payload['image'] = imageBase64;
+    if (prompt != null && prompt.isNotEmpty) payload['prompt'] = prompt;
+    _socket?.emit('ai_query', payload);
   }
 
   bool get isConnected => _socket?.connected ?? false;

@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'discovery_service.dart';
 import 'socket_service.dart';
 
@@ -100,6 +103,15 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentSpeedIndex = 1;
   final List<double> _speedOptions = [0.75, 1.0, 1.25, 1.5, 2.0];
 
+  // State Cekrek AI
+  File? _capturedImage;
+  String? _extractedOcrText;
+  String? _aiResponseAnswer;
+  bool _isAiLoading = false;
+  String _aiStatusMessage = '';
+  final TextEditingController _aiPromptController = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
+
   @override
   void initState() {
     super.initState();
@@ -193,7 +205,78 @@ class _HomeScreenState extends State<HomeScreen> {
         if (mounted) setState(() => _state = ConnState.disconnected);
       },
       onMediaState: _onMediaStateReceived,
+      onAiResponse: _onAiResponseReceived,
     );
+  }
+
+  void _onAiResponseReceived(Map<String, dynamic> data) {
+    if (!mounted) return;
+    setState(() {
+      _isAiLoading = false;
+      if (data['success'] == true) {
+        _extractedOcrText = data['ocr_text'];
+        _aiResponseAnswer = data['llm_answer'];
+        _aiStatusMessage = '✅ Selesai! Jawaban sudah dicetak di Terminal PC & tersalin di clipboard.';
+      } else {
+        _aiStatusMessage = '❌ Error: ${data['error'] ?? 'Gagal memproses AI'}';
+      }
+    });
+  }
+
+  Future<void> _takePhotoAndProcess({bool fromGallery = false}) async {
+    HapticFeedback.mediumImpact();
+    try {
+      final XFile? photo = await _picker.pickImage(
+        source: fromGallery ? ImageSource.gallery : ImageSource.camera,
+        maxWidth: 1920,
+        imageQuality: 85,
+      );
+      if (photo == null) return;
+
+      setState(() {
+        _capturedImage = File(photo.path);
+        _isAiLoading = true;
+        _aiStatusMessage = '📸 Memproses ekstraksi teks (OCR)...';
+        _aiResponseAnswer = null;
+      });
+
+      String ocrResult = '';
+      try {
+        final inputImage = InputImage.fromFilePath(photo.path);
+        final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+        final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+        await textRecognizer.close();
+        ocrResult = recognizedText.text.trim();
+      } catch (e) {
+        debugPrint('ML Kit OCR error: $e');
+      }
+
+      setState(() {
+        _extractedOcrText = ocrResult;
+      });
+
+      final prompt = _aiPromptController.text.trim().isNotEmpty ? _aiPromptController.text.trim() : null;
+
+      if (ocrResult.isNotEmpty) {
+        setState(() {
+          _aiStatusMessage = '⚡ Mengirim teks OCR ke Gemini via Terminal Server PC...';
+        });
+        _socketService.sendAiQuery(text: ocrResult, prompt: prompt);
+      } else {
+        // Fallback jika ML Kit tidak mendeteksi teks di HP, kirim ke server PC untuk RapidOCR lokal
+        setState(() {
+          _aiStatusMessage = '🔄 Menjalankan OCR lokal di server PC (0 vision token)...';
+        });
+        final bytes = await photo.readAsBytes();
+        final base64Img = base64Encode(bytes);
+        _socketService.sendAiQuery(imageBase64: base64Img, prompt: prompt);
+      }
+    } catch (e) {
+      setState(() {
+        _isAiLoading = false;
+        _aiStatusMessage = '❌ Gagal: $e';
+      });
+    }
   }
 
   Future<void> _showManualIpDialog() async {
@@ -642,6 +725,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _buildMediaTab(),
                 _buildShortcutsTab(),
                 _buildNavTab(),
+                _buildAiAssistantTab(),
               ],
             ),
           ),
@@ -719,6 +803,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       icon: Icon(Icons.navigation, size: 20, color: Color(0xFF5A606A)),
                       selectedIcon: Icon(Icons.navigation, size: 20, color: AppColors.textDark),
                       label: 'Navigasi',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.camera_alt_outlined, size: 20, color: Color(0xFF5A606A)),
+                      selectedIcon: Icon(Icons.camera_alt, size: 20, color: AppColors.textDark),
+                      label: 'Cekrek AI',
                     ),
                   ],
                 ),
@@ -2818,6 +2907,357 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  // ---------- TAB 6: ASISTEN CEKREK AI & OCR ----------
+  Widget _buildAiAssistantTab() {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header Info Card
+            Container(
+              padding: const EdgeInsets.all(14.0),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.cardBorder, width: 1.5),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 4,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.keyOperator.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.psychology, color: AppColors.accentGreen, size: 26),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Asisten Cekrek AI (OCR + LLM)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14.5,
+                            color: AppColors.textDark,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Foto teks/soal di layar -> AI menjawab di Terminal PC & tersalin di clipboard Windows.',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.textSecondary,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Tombol Utama: Cekrek Layar
+            ElevatedButton(
+              onPressed: _isAiLoading ? null : () => _takePhotoAndProcess(fromGallery: false),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.keyEnter,
+                foregroundColor: AppColors.textDark,
+                disabledBackgroundColor: AppColors.keyEnter.withOpacity(0.5),
+                padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: const BorderSide(color: AppColors.borderDark, width: 2.0),
+                ),
+                elevation: 3,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.camera_alt, size: 28, color: AppColors.textDark),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '📸 CEKREK LAYAR / SOAL',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                      Text(
+                        _isAiLoading ? 'Sedang memproses...' : 'Buka kamera HP & ekstrak teks otomatis',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // Opsi Tambahan: Pilih dari Galeri
+            OutlinedButton.icon(
+              onPressed: _isAiLoading ? null : () => _takePhotoAndProcess(fromGallery: true),
+              icon: const Icon(Icons.photo_library_outlined, size: 18, color: AppColors.textSecondary),
+              label: const Text(
+                'Atau unggah gambar dari Galeri / Screenshot HP',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.cardBorder),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Input Instruksi Tambahan (Opsional)
+            TextField(
+              controller: _aiPromptController,
+              decoration: InputDecoration(
+                hintText: 'Instruksi tambahan (opsional, misal: "Pilih jawaban yang benar" atau "Jelaskan ringkas")',
+                hintStyle: const TextStyle(fontSize: 11.5, color: Color(0xFF94A3B8)),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppColors.cardBorder),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppColors.cardBorder),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppColors.accentGreen, width: 1.5),
+                ),
+              ),
+              style: const TextStyle(fontSize: 12, color: AppColors.textDark),
+              maxLines: 2,
+            ),
+            const SizedBox(height: 14),
+
+            // Status Card / Loading
+            if (_isAiLoading)
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFF93C5FD)),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Color(0xFF2563EB)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        _aiStatusMessage,
+                        style: const TextStyle(fontSize: 12.5, color: Color(0xFF1E40AF), fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (_aiStatusMessage.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFFEF2F2) : const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFFCA5A5) : const Color(0xFF86EFAC),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _aiStatusMessage.startsWith('❌') ? Icons.error_outline : Icons.check_circle_outline,
+                      size: 20,
+                      color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFDC2626) : const Color(0xFF16A34A),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _aiStatusMessage,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: _aiStatusMessage.startsWith('❌') ? const Color(0xFF991B1B) : const Color(0xFF166534),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 14),
+
+            // Big PC Terminal Notice Card
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF334155)),
+                boxShadow: const [
+                  BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2)),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.desktop_windows, color: Color(0xFF38BDF8), size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'Tampilan Utama: Layar Terminal PC',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Jawaban lengkap AI otomatis dicetak pada jendela Terminal Server PC Anda dengan ukuran font besar & jelas.\n'
+                    'Clipboard Windows juga sudah otomatis tersinkronisasi (siap di-paste dengan Ctrl+V jika Anda mau).',
+                    style: TextStyle(fontSize: 11.5, color: Color(0xFFCBD5E1), height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Teks OCR yang Terdeteksi (jika ada)
+            if (_extractedOcrText != null && _extractedOcrText!.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.cardBorder),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Teks Terbaca dari Layar (OCR):',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppColors.textDark),
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            Clipboard.setData(ClipboardData(text: _extractedOcrText!));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Teks OCR disalin!'), duration: Duration(seconds: 1)),
+                            );
+                          },
+                          child: const Icon(Icons.copy, size: 16, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Text(
+                        _extractedOcrText!,
+                        style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: Color(0xFF334155)),
+                        maxLines: 6,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // Ringkasan Jawaban di Layar HP (jika ada)
+            if (_aiResponseAnswer != null && _aiResponseAnswer!.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.keyEnter, width: 1.5),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.smart_toy_outlined, size: 18, color: AppColors.accentGreen),
+                            SizedBox(width: 6),
+                            Text(
+                              'Ringkasan Jawaban di HP:',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: AppColors.textDark),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.copy, size: 18, color: AppColors.accentGreen),
+                          tooltip: 'Salin jawaban',
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            Clipboard.setData(ClipboardData(text: _aiResponseAnswer!));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Jawaban disalin ke clipboard HP!'), duration: Duration(seconds: 1)),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 12, color: AppColors.cardBorder),
+                    Text(
+                      _aiResponseAnswer!,
+                      style: const TextStyle(fontSize: 12, color: AppColors.textDark, height: 1.4),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
     );

@@ -9,6 +9,8 @@ venv/
 dist/
 build/
 build-output/
+server/ai_config.json
+.env
 
 # Flutter / Dart
 .dart_tool/

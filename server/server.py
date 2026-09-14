@@ -50,6 +50,14 @@ try:
 except ImportError:
     from server.media_manager import MediaManager
 
+# Import AIService
+try:
+    from ai_service import AIService
+except ImportError:
+    from server.ai_service import AIService
+
+ai_service = AIService()
+
 # ---------- Konfigurasi ----------
 TCP_PORT = 8080
 UDP_DISCOVERY_PORT = 37020
@@ -369,6 +377,77 @@ def on_text_input(data):
             pyautogui.write(text)
         except Exception:
             print(f"[Teks] Gagal input teks: {e}")
+
+
+@socketio.on("ai_query")
+def on_ai_query(data):
+    """
+    Menangani permintaan analisis OCR & LLM dari HP.
+    Mencetak teks OCR dan jawaban AI secara BESAR dan JELAS di terminal server,
+    serta menyalin jawaban ke clipboard Windows secara hening (konsep Ctrl+C, tanpa injeksi Ctrl+V).
+    """
+    data = data or {}
+    ocr_text = data.get("text") or data.get("ocr_text")
+    image_data = data.get("image")
+    prompt = data.get("prompt")
+
+    print("\n" + "=" * 74)
+    print("📸 [BYTEBRIDGE AI ASSISTANT] - Menerima permintaan dari HP...")
+    print("=" * 74)
+
+    res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt)
+
+    if res.get("success"):
+        detected_text = res.get("ocr_text", "").strip()
+        llm_answer = res.get("llm_answer", "").strip()
+        model_name = res.get("model_used", "Gemini")
+
+        # 1. Cetak ke Terminal secara BESAR, RAPI, dan JELAS
+        print("\n" + "╔" + "═" * 72 + "╗")
+        print("║  📸 TEKS TERDETEKSI DARI LAYAR (HASIL OCR)")
+        print("╠" + "═" * 72 + "╣")
+        for line in detected_text.splitlines():
+            print(f"  {line}")
+        print("\n" + "╠" + "═" * 72 + "╣")
+        print(f"║  🤖 JAWABAN & ANALISIS AI ({model_name})")
+        print("╠" + "═" * 72 + "╣\n")
+        print(llm_answer)
+        print("\n" + "╚" + "═" * 72 + "╝")
+
+        # 2. Sinkronkan ke Clipboard Windows (Silent Copy, konsep Ctrl+C)
+        try:
+            pyperclip.copy(llm_answer)
+            print("[✓] Jawaban AI otomatis disalin ke Clipboard PC! (Siap Ctrl+V manual jika dibutuhkan)")
+        except Exception as e:
+            print(f"[!] Gagal menyalin ke clipboard PC: {e}")
+        print("=" * 74 + "\n")
+
+        # 3. Kirim status sukses balik ke HP
+        emit("ai_response", {
+            "success": True,
+            "ocr_text": detected_text,
+            "llm_answer": llm_answer,
+            "model": model_name
+        })
+    else:
+        err_msg = res.get("error", "Terjadi kesalahan")
+        print(f"\n[AI Error] ❌ {err_msg}\n" + "=" * 74 + "\n")
+        emit("ai_response", {
+            "success": False,
+            "error": err_msg
+        })
+
+
+@socketio.on("save_ai_config")
+def on_save_ai_config(data):
+    """Simpan konfigurasi API Key dari HP."""
+    if not data or not isinstance(data, dict):
+        return
+    success = ai_service.save_config(data)
+    emit("save_ai_config_response", {
+        "success": success,
+        "message": "Konfigurasi AI berhasil disimpan" if success else "Gagal menyimpan konfigurasi AI"
+    })
 
 
 def print_banner(primary_ip, all_ips):

@@ -15,3 +15,6 @@ winrt-windows-storage-streams
 winrt-windows-media
 pycaw
 comtypes
+google-genai
+rapidocr-onnxruntime
+pillow
