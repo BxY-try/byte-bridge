@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:camera/camera.dart';
 import 'discovery_service.dart';
 import 'socket_service.dart';
 
@@ -112,6 +113,17 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _aiPromptController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
 
+  // State Mode Kilat
+  bool _isKilatMode = false;
+  CameraController? _cameraController;
+  List<CameraDescription>? _availableCameras;
+  bool _isCameraInitialized = false;
+  String? _ocrOverlayText;
+  Timer? _overlayDismissTimer;
+  Timer? _aiTimeoutTimer;
+  int _kilatShotCount = 0;
+  bool _isKilatProcessing = false;
+
   @override
   void initState() {
     super.initState();
@@ -199,10 +211,30 @@ class _HomeScreenState extends State<HomeScreen> {
         if (mounted) setState(() => _state = ConnState.connected);
       },
       onDisconnect: () {
-        if (mounted) setState(() => _state = ConnState.disconnected);
+        _aiTimeoutTimer?.cancel();
+        if (mounted) {
+          setState(() {
+            _state = ConnState.disconnected;
+            if (_isAiLoading || _isKilatProcessing) {
+              _isAiLoading = false;
+              _isKilatProcessing = false;
+              _aiStatusMessage = '❌ Terputus dari PC saat menunggu respon AI.';
+            }
+          });
+        }
       },
       onError: (_) {
-        if (mounted) setState(() => _state = ConnState.disconnected);
+        _aiTimeoutTimer?.cancel();
+        if (mounted) {
+          setState(() {
+            _state = ConnState.disconnected;
+            if (_isAiLoading || _isKilatProcessing) {
+              _isAiLoading = false;
+              _isKilatProcessing = false;
+              _aiStatusMessage = '❌ Koneksi terputus ke PC.';
+            }
+          });
+        }
       },
       onMediaState: _onMediaStateReceived,
       onAiResponse: _onAiResponseReceived,
@@ -211,14 +243,34 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onAiResponseReceived(Map<String, dynamic> data) {
     if (!mounted) return;
+    _aiTimeoutTimer?.cancel();
     setState(() {
       _isAiLoading = false;
+      _isKilatProcessing = false;
       if (data['success'] == true) {
         _extractedOcrText = data['ocr_text'];
         _aiResponseAnswer = data['llm_answer'];
-        _aiStatusMessage = '✅ Selesai! Jawaban sudah dicetak di Terminal PC & tersalin di clipboard.';
+        final model = data['model'] ?? 'Gemini';
+        if (_isKilatMode) {
+          _aiStatusMessage = '✅ Soal #$_kilatShotCount dijawab ($model) — Cek Terminal PC! Siap jepret lagi ⚡';
+        } else {
+          _aiStatusMessage = '✅ Selesai ($model)! Jawaban di Terminal PC & clipboard.';
+        }
       } else {
         _aiStatusMessage = '❌ Error: ${data['error'] ?? 'Gagal memproses AI'}';
+      }
+    });
+  }
+
+  void _startAiTimeoutTimer() {
+    _aiTimeoutTimer?.cancel();
+    _aiTimeoutTimer = Timer(const Duration(seconds: 30), () {
+      if (mounted && (_isAiLoading || _isKilatProcessing)) {
+        setState(() {
+          _isAiLoading = false;
+          _isKilatProcessing = false;
+          _aiStatusMessage = '❌ Timeout: Server tidak merespons dalam 30 detik. Silakan coba lagi.';
+        });
       }
     });
   }
@@ -257,6 +309,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final prompt = _aiPromptController.text.trim().isNotEmpty ? _aiPromptController.text.trim() : null;
 
+      _startAiTimeoutTimer();
       if (ocrResult.isNotEmpty) {
         setState(() {
           _aiStatusMessage = '⚡ Mengirim teks OCR ke Gemini via Terminal Server PC...';
@@ -272,9 +325,137 @@ class _HomeScreenState extends State<HomeScreen> {
         _socketService.sendAiQuery(imageBase64: base64Img, prompt: prompt);
       }
     } catch (e) {
+      _aiTimeoutTimer?.cancel();
       setState(() {
         _isAiLoading = false;
         _aiStatusMessage = '❌ Gagal: $e';
+      });
+    }
+  }
+
+  // ========== MODE KILAT METHODS ==========
+
+  Future<void> _initKilatCamera() async {
+    try {
+      _availableCameras ??= await availableCameras();
+      if (_availableCameras == null || _availableCameras!.isEmpty) {
+        setState(() {
+          _aiStatusMessage = '❌ Tidak ada kamera yang tersedia';
+          _isKilatMode = false;
+        });
+        return;
+      }
+      // Gunakan kamera belakang
+      final camera = _availableCameras!.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => _availableCameras!.first,
+      );
+      _cameraController = CameraController(
+        camera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+      await _cameraController!.initialize();
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = true;
+          _kilatShotCount = 0;
+          _aiStatusMessage = '⚡ Mode Kilat aktif! Tap tombol shutter untuk jepret.';
+        });
+      }
+    } catch (e) {
+      debugPrint('Camera init error: $e');
+      if (mounted) {
+        setState(() {
+          _aiStatusMessage = '❌ Gagal membuka kamera: $e';
+          _isKilatMode = false;
+          _isCameraInitialized = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _disposeKilatCamera() async {
+    _overlayDismissTimer?.cancel();
+    _overlayDismissTimer = null;
+    _ocrOverlayText = null;
+    if (_cameraController != null) {
+      try {
+        await _cameraController!.dispose();
+      } catch (_) {}
+      _cameraController = null;
+    }
+    _isCameraInitialized = false;
+  }
+
+  Future<void> _kilatCapture() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) return;
+    if (_isKilatProcessing) return; // Cegah double-tap
+
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _isKilatProcessing = true;
+      _kilatShotCount++;
+      _aiStatusMessage = '📸 Soal #$_kilatShotCount — Memproses OCR...';
+      _isAiLoading = true;
+    });
+
+    try {
+      final XFile photo = await _cameraController!.takePicture();
+
+      // OCR di background
+      String ocrResult = '';
+      try {
+        final inputImage = InputImage.fromFilePath(photo.path);
+        final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+        final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+        await textRecognizer.close();
+        ocrResult = recognizedText.text.trim();
+      } catch (e) {
+        debugPrint('ML Kit OCR error (Kilat): $e');
+      }
+
+      // Tampilkan overlay cuplikan teks selama 2.5 detik
+      if (ocrResult.isNotEmpty && mounted) {
+        final snippet = ocrResult.length > 80
+            ? '${ocrResult.substring(0, 80)}...'
+            : ocrResult;
+        setState(() {
+          _ocrOverlayText = snippet;
+          _extractedOcrText = ocrResult;
+        });
+        _overlayDismissTimer?.cancel();
+        _overlayDismissTimer = Timer(const Duration(milliseconds: 2500), () {
+          if (mounted) setState(() => _ocrOverlayText = null);
+        });
+      }
+
+      final prompt = _aiPromptController.text.trim().isNotEmpty
+          ? _aiPromptController.text.trim()
+          : null;
+
+      _startAiTimeoutTimer();
+      if (ocrResult.isNotEmpty) {
+        setState(() {
+          _aiStatusMessage = '⚡ Soal #$_kilatShotCount — Mengirim ke Gemini...';
+        });
+        _socketService.sendAiQuery(text: ocrResult, prompt: prompt);
+      } else {
+        // Fallback: kirim gambar ke server untuk RapidOCR
+        setState(() {
+          _aiStatusMessage = '🔄 Soal #$_kilatShotCount — OCR di server PC...';
+        });
+        final bytes = await photo.readAsBytes();
+        final base64Img = base64Encode(bytes);
+        _socketService.sendAiQuery(imageBase64: base64Img, prompt: prompt);
+      }
+    } catch (e) {
+      _aiTimeoutTimer?.cancel();
+      setState(() {
+        _isAiLoading = false;
+        _isKilatProcessing = false;
+        _aiStatusMessage = '❌ Gagal jepret: $e';
       });
     }
   }
@@ -575,6 +756,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _keyboardTextController.dispose();
     _keyboardFocusNode.dispose();
+    _aiPromptController.dispose();
     _deleteInitialTimer?.cancel();
     _deleteRepeatTimer?.cancel();
     _arrowInitialTimer?.cancel();
@@ -582,6 +764,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _scrollInitialTimer?.cancel();
     _scrollRepeatTimer?.cancel();
     _mediaInterpolationTimer?.cancel();
+    _overlayDismissTimer?.cancel();
+    _aiTimeoutTimer?.cancel();
+    _disposeKilatCamera();
     _socketService.dispose();
     super.dispose();
   }
@@ -2974,67 +3159,294 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
 
-            // Tombol Utama: Cekrek Layar
-            ElevatedButton(
-              onPressed: _isAiLoading ? null : () => _takePhotoAndProcess(fromGallery: false),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.keyEnter,
-                foregroundColor: AppColors.textDark,
-                disabledBackgroundColor: AppColors.keyEnter.withOpacity(0.5),
-                padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: const BorderSide(color: AppColors.borderDark, width: 2.0),
+            // ===== TOGGLE MODE KILAT =====
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: _isKilatMode ? const Color(0xFFFFFBEB) : Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _isKilatMode ? const Color(0xFFF59E0B) : AppColors.cardBorder,
+                  width: _isKilatMode ? 1.8 : 1.0,
                 ),
-                elevation: 3,
               ),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.camera_alt, size: 28, color: AppColors.textDark),
+                  Icon(
+                    _isKilatMode ? Icons.flash_on : Icons.flash_off,
+                    color: _isKilatMode ? const Color(0xFFF59E0B) : AppColors.textSecondary,
+                    size: 22,
+                  ),
                   const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        '📸 CEKREK LAYAR / SOAL',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.3,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Mode Kilat',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: _isKilatMode ? const Color(0xFF92400E) : AppColors.textDark,
+                          ),
                         ),
-                      ),
-                      Text(
-                        _isAiLoading ? 'Sedang memproses...' : 'Buka kamera HP & ekstrak teks otomatis',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal),
-                      ),
-                    ],
+                        Text(
+                          _isKilatMode
+                              ? 'Jepret → langsung kirim → kamera tetap nyala!'
+                              : 'Aktifkan untuk jepret beruntun tanpa konfirmasi',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: _isKilatMode ? const Color(0xFFB45309) : AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: _isKilatMode,
+                    activeColor: const Color(0xFFF59E0B),
+                    activeTrackColor: const Color(0xFFFDE68A),
+                    onChanged: (val) async {
+                      HapticFeedback.mediumImpact();
+                      if (val) {
+                        setState(() => _isKilatMode = true);
+                        await _initKilatCamera();
+                      } else {
+                        await _disposeKilatCamera();
+                        setState(() {
+                          _isKilatMode = false;
+                          _ocrOverlayText = null;
+                          _aiStatusMessage = '';
+                        });
+                      }
+                    },
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 8),
-
-            // Opsi Tambahan: Pilih dari Galeri
-            OutlinedButton.icon(
-              onPressed: _isAiLoading ? null : () => _takePhotoAndProcess(fromGallery: true),
-              icon: const Icon(Icons.photo_library_outlined, size: 18, color: AppColors.textSecondary),
-              label: const Text(
-                'Atau unggah gambar dari Galeri / Screenshot HP',
-                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-              ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.cardBorder),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-              ),
-            ),
             const SizedBox(height: 12),
 
-            // Input Instruksi Tambahan (Opsional)
+            // ===== MODE KILAT: LIVE VIEWFINDER + SHUTTER =====
+            if (_isKilatMode) ...[
+              // Live Camera Viewfinder
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFFF59E0B), width: 2.5),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(13.5),
+                    child: AspectRatio(
+                      aspectRatio: _isCameraInitialized && _cameraController != null
+                          ? _cameraController!.value.aspectRatio
+                          : 4 / 3,
+                      child: _isCameraInitialized && _cameraController != null
+                          ? Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                CameraPreview(_cameraController!),
+
+                                // OCR Overlay cuplikan teks (muncul 2.5 detik)
+                                if (_ocrOverlayText != null)
+                                  Positioned(
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
+                                    child: AnimatedOpacity(
+                                      opacity: _ocrOverlayText != null ? 1.0 : 0.0,
+                                      duration: const Duration(milliseconds: 300),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.bottomCenter,
+                                            end: Alignment.topCenter,
+                                            colors: [
+                                              Colors.black.withOpacity(0.85),
+                                              Colors.black.withOpacity(0.0),
+                                            ],
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '📝 $_ocrOverlayText',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11.5,
+                                            fontWeight: FontWeight.w500,
+                                            height: 1.3,
+                                            shadows: [Shadow(blurRadius: 4, color: Colors.black)],
+                                          ),
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                // Shot counter badge (pojok kanan atas)
+                                if (_kilatShotCount > 0)
+                                  Positioned(
+                                    top: 8,
+                                    right: 8,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.6),
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: Text(
+                                        '⚡ #$_kilatShotCount',
+                                        style: const TextStyle(
+                                          color: Color(0xFFFDE68A),
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            )
+                          : const Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  CircularProgressIndicator(strokeWidth: 2.5, color: Color(0xFFF59E0B)),
+                                  SizedBox(height: 10),
+                                  Text(
+                                    'Membuka kamera...',
+                                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Shutter Button (besar, mencolok)
+              Center(
+                child: GestureDetector(
+                  onTap: _isKilatProcessing ? null : _kilatCapture,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _isKilatProcessing
+                          ? AppColors.keyOperator
+                          : AppColors.keyEnter,
+                      border: Border.all(
+                        color: AppColors.borderDark,
+                        width: 4,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _isKilatProcessing
+                              ? Colors.black12
+                              : AppColors.keyEnter.withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: _isKilatProcessing
+                        ? const Center(
+                            child: SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                color: AppColors.textDark,
+                              ),
+                            ),
+                          )
+                        : const Icon(Icons.camera, size: 34, color: AppColors.textDark),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Center(
+                child: Text(
+                  _isKilatProcessing ? 'Memproses...' : 'Tap untuk jepret ⚡',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _isKilatProcessing ? AppColors.textSecondary : AppColors.textDark,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // ===== MODE NORMAL: TOMBOL CEKREK + GALERI =====
+            if (!_isKilatMode) ...[
+              // Tombol Utama: Cekrek Layar
+              ElevatedButton(
+                onPressed: _isAiLoading ? null : () => _takePhotoAndProcess(fromGallery: false),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.keyEnter,
+                  foregroundColor: AppColors.textDark,
+                  disabledBackgroundColor: AppColors.keyEnter.withOpacity(0.5),
+                  padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: const BorderSide(color: AppColors.borderDark, width: 2.0),
+                  ),
+                  elevation: 3,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.camera_alt, size: 28, color: AppColors.textDark),
+                    const SizedBox(width: 10),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          '📸 CEKREK LAYAR / SOAL',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                        Text(
+                          _isAiLoading ? 'Sedang memproses...' : 'Buka kamera HP & ekstrak teks otomatis',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Opsi Tambahan: Pilih dari Galeri
+              OutlinedButton.icon(
+                onPressed: _isAiLoading ? null : () => _takePhotoAndProcess(fromGallery: true),
+                icon: const Icon(Icons.photo_library_outlined, size: 18, color: AppColors.textSecondary),
+                label: const Text(
+                  'Atau unggah gambar dari Galeri / Screenshot HP',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppColors.cardBorder),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Input Instruksi Tambahan (Opsional) — SELALU TAMPIL, TIDAK DI-CLEAR
             TextField(
               controller: _aiPromptController,
               decoration: InputDecoration(
@@ -3055,9 +3467,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   borderRadius: BorderRadius.circular(12),
                   borderSide: const BorderSide(color: AppColors.accentGreen, width: 1.5),
                 ),
+                suffixIcon: _aiPromptController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18, color: AppColors.textSecondary),
+                        onPressed: () {
+                          _aiPromptController.clear();
+                          setState(() {});
+                        },
+                      )
+                    : null,
               ),
               style: const TextStyle(fontSize: 12, color: AppColors.textDark),
               maxLines: 2,
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 14),
 
@@ -3091,18 +3513,26 @@ class _HomeScreenState extends State<HomeScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFFEF2F2) : const Color(0xFFF0FDF4),
+                  color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFFEF2F2)
+                      : _aiStatusMessage.startsWith('⚡') ? const Color(0xFFFFFBEB)
+                      : const Color(0xFFF0FDF4),
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                    color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFFCA5A5) : const Color(0xFF86EFAC),
+                    color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFFCA5A5)
+                        : _aiStatusMessage.startsWith('⚡') ? const Color(0xFFFCD34D)
+                        : const Color(0xFF86EFAC),
                   ),
                 ),
                 child: Row(
                   children: [
                     Icon(
-                      _aiStatusMessage.startsWith('❌') ? Icons.error_outline : Icons.check_circle_outline,
+                      _aiStatusMessage.startsWith('❌') ? Icons.error_outline
+                          : _aiStatusMessage.startsWith('⚡') ? Icons.flash_on
+                          : Icons.check_circle_outline,
                       size: 20,
-                      color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFDC2626) : const Color(0xFF16A34A),
+                      color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFDC2626)
+                          : _aiStatusMessage.startsWith('⚡') ? const Color(0xFFF59E0B)
+                          : const Color(0xFF16A34A),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -3111,7 +3541,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: _aiStatusMessage.startsWith('❌') ? const Color(0xFF991B1B) : const Color(0xFF166534),
+                          color: _aiStatusMessage.startsWith('❌') ? const Color(0xFF991B1B)
+                              : _aiStatusMessage.startsWith('⚡') ? const Color(0xFF92400E)
+                              : const Color(0xFF166534),
                         ),
                       ),
                     ),

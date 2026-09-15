@@ -32,9 +32,11 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_confi
 
 # Model Gemini gratis & cepat versi terbaru (prioritas berurutan)
 DEFAULT_MODELS = [
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash"
+    "gemini-flash-latest"
 ]
 
 
@@ -48,8 +50,8 @@ class AIService:
         """Memuat konfigurasi dari file atau environment variable."""
         cfg = {
             "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
-            "model": "gemini-2.5-flash",
-            "prompt_template": "Tolong jawab, selesaikan, atau jelaskan persoalan ini dengan tepat, padat, terstruktur, dan to the point."
+            "model": "gemini-3.7-flash",
+            "prompt_template": "Tolong jawab, selesaikan, atau jelaskan persoalan ini dengan tepat, padat, terstruktur, dan to the point. Gunakan format teks biasa yang mudah dibaca. Gunakan heading (#) atau bold (**) hanya jika benar-benar membantu, jangan di setiap baris. Untuk rumus matematika, tulis dalam bentuk teks biasa (misal: x^2 + 3x = 0)."
         }
         if os.path.exists(CONFIG_PATH):
             try:
@@ -143,19 +145,66 @@ class AIService:
 
         # Coba model berurutan jika ada kuota habis / rate limit
         last_err = ""
-        preferred_model = self.config.get("model", "gemini-2.5-flash")
+        preferred_model = self.config.get("model", "gemini-3.7-flash")
         candidate_models = [preferred_model] + [m for m in DEFAULT_MODELS if m != preferred_model]
 
         for model_name in candidate_models:
             try:
-                response = self._client.models.generate_content(
-                    model=model_name,
-                    contents=prompt
-                )
-                if response and response.text:
+                # Tentukan config thinking sesuai arsitektur model
+                gen_config = None
+                if any(v in model_name for v in ["gemini-3", "gemini-3.6", "gemini-3.7", "gemini-3.8"]):
+                    # Gemini 3 series (3.7, 3.6, dsb): aktifkan thinking_level="HIGH" untuk penalaran mendalam & akurat
+                    gen_config = types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level="HIGH",
+                            include_thoughts=False
+                        ),
+                        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+                    )
+                elif "gemini-2.5" in model_name:
+                    # Gemini 2.5 series: gunakan thinking_budget=-1 (dinamis)
+                    gen_config = types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(
+                            thinking_budget=-1,
+                            include_thoughts=False
+                        ),
+                        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+                    )
+
+                try:
+                    response = self._client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=gen_config
+                    )
+                except Exception as call_err:
+                    if gen_config is not None and any(kw in str(call_err).lower() for kw in ["thinking", "budget", "invalid"]):
+                        print(f"[AIService] Model {model_name} dengan thinking_config gagal ({call_err}), mencoba tanpa thinking_config...")
+                        response = self._client.models.generate_content(
+                            model=model_name,
+                            contents=prompt
+                        )
+                    else:
+                        raise call_err
+
+                # Ambil teks jawaban bersih (hanya teks non-thought)
+                answer_text = ""
+                if response and hasattr(response, "candidates") and response.candidates:
+                    parts = getattr(response.candidates[0].content, "parts", [])
+                    answer_parts = [
+                        p.text for p in parts
+                        if getattr(p, "text", None) and not getattr(p, "thought", False)
+                    ]
+                    if answer_parts:
+                        answer_text = "".join(answer_parts).strip()
+
+                if not answer_text and response and getattr(response, "text", None):
+                    answer_text = response.text.strip()
+
+                if answer_text:
                     return {
                         "success": True,
-                        "answer": response.text.strip(),
+                        "answer": answer_text,
                         "model": model_name
                     }
             except Exception as err:

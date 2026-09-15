@@ -18,3 +18,4 @@ comtypes
 google-genai
 rapidocr-onnxruntime
 pillow
+rich

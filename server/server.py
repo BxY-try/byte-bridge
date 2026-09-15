@@ -44,19 +44,31 @@ import qrcode
 import psutil
 import ipaddress
 
-# Import MediaManager
+# Rich: terminal rendering cantik untuk Markdown & panel
 try:
-    from media_manager import MediaManager
+    from rich.console import Console
+    from rich.markdown import Markdown as RichMarkdown
+    from rich.panel import Panel
+    from rich.text import Text as RichText
+    _rich_console = Console(force_terminal=True, legacy_windows=False)
+    _has_rich = True
 except ImportError:
-    from server.media_manager import MediaManager
+    _has_rich = False
+    _rich_console = None
 
-# Import AIService
+# Import AIService (diimpor sebelum WinRT/MediaManager untuk mencegah konflik runtime DLL)
 try:
     from ai_service import AIService
 except ImportError:
     from server.ai_service import AIService
 
 ai_service = AIService()
+
+# Import MediaManager
+try:
+    from media_manager import MediaManager
+except ImportError:
+    from server.media_manager import MediaManager
 
 # ---------- Konfigurasi ----------
 TCP_PORT = 8080
@@ -402,25 +414,44 @@ def on_ai_query(data):
         llm_answer = res.get("llm_answer", "").strip()
         model_name = res.get("model_used", "Gemini")
 
-        # 1. Cetak ke Terminal secara BESAR, RAPI, dan JELAS
-        print("\n" + "╔" + "═" * 72 + "╗")
-        print("║  📸 TEKS TERDETEKSI DARI LAYAR (HASIL OCR)")
-        print("╠" + "═" * 72 + "╣")
-        for line in detected_text.splitlines():
-            print(f"  {line}")
-        print("\n" + "╠" + "═" * 72 + "╣")
-        print(f"║  🤖 JAWABAN & ANALISIS AI ({model_name})")
-        print("╠" + "═" * 72 + "╣\n")
-        print(llm_answer)
-        print("\n" + "╚" + "═" * 72 + "╝")
+        # 1. Cetak ke Terminal secara BESAR, RAPI, dan JELAS menggunakan Rich
+        printed_rich = False
+        if _has_rich and _rich_console:
+            try:
+                _rich_console.print()
+                # Badge model yang mencolok
+                model_badge = RichText()
+                model_badge.append("🤖 Model: ", style="bold white")
+                model_badge.append(model_name, style="bold cyan")
+                model_badge.append("  │  ", style="dim")
+                model_badge.append(f"OCR: {len(detected_text)} karakter", style="bold yellow")
+                _rich_console.print(Panel(model_badge, title="[bold green]⚡ BYTEBRIDGE AI[/bold green]", border_style="green"))
 
-        # 2. Sinkronkan ke Clipboard Windows (Silent Copy, konsep Ctrl+C)
+                # Panel teks OCR yang terbaca
+                _rich_console.print(Panel(detected_text or "(tidak ada teks)", title="[bold yellow]📸 Teks Terdeteksi (OCR)[/bold yellow]", border_style="yellow"))
+
+                # Panel jawaban AI — Markdown dirender cantik!
+                _rich_console.print(Panel(RichMarkdown(llm_answer), title=f"[bold cyan]🤖 Jawaban AI ({model_name})[/bold cyan]", border_style="cyan", padding=(1, 2)))
+                _rich_console.print()
+                printed_rich = True
+            except Exception as e:
+                print(f"[AIService] Gagal render Rich ({e}), menggunakan format teks standar...")
+                printed_rich = False
+
+        if not printed_rich:
+            # Fallback jika rich tidak tersedia atau gagal render
+            print("\n" + "=" * 74)
+            print(f"🤖 Model: {model_name} | OCR: {len(detected_text)} karakter")
+            print("=" * 74)
+            print(f"\n📸 TEKS OCR:\n{detected_text}")
+            print(f"\n🤖 JAWABAN AI:\n{llm_answer}")
+            print("\n" + "=" * 74 + "\n")
+
+        # 2. Salin jawaban ke clipboard Windows
         try:
             pyperclip.copy(llm_answer)
-            print("[✓] Jawaban AI otomatis disalin ke Clipboard PC! (Siap Ctrl+V manual jika dibutuhkan)")
-        except Exception as e:
-            print(f"[!] Gagal menyalin ke clipboard PC: {e}")
-        print("=" * 74 + "\n")
+        except Exception:
+            pass
 
         # 3. Kirim status sukses balik ke HP
         emit("ai_response", {
@@ -431,7 +462,15 @@ def on_ai_query(data):
         })
     else:
         err_msg = res.get("error", "Terjadi kesalahan")
-        print(f"\n[AI Error] ❌ {err_msg}\n" + "=" * 74 + "\n")
+        printed_err_rich = False
+        if _has_rich and _rich_console:
+            try:
+                _rich_console.print(Panel(f"[bold red]❌ {err_msg}[/bold red]", title="[red]AI Error[/red]", border_style="red"))
+                printed_err_rich = True
+            except Exception:
+                printed_err_rich = False
+        if not printed_err_rich:
+            print(f"\n[AI Error] ❌ {err_msg}\n" + "=" * 74 + "\n")
         emit("ai_response", {
             "success": False,
             "error": err_msg
