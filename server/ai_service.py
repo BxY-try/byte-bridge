@@ -35,8 +35,9 @@ DEFAULT_MODELS = [
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
-    "gemini-2.5-flash",
-    "gemini-flash-latest"
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-2.5-flash"
 ]
 
 
@@ -150,42 +151,12 @@ class AIService:
 
         for model_name in candidate_models:
             try:
-                # Tentukan config thinking sesuai arsitektur model
-                gen_config = None
-                if any(v in model_name for v in ["gemini-3", "gemini-3.6", "gemini-3.7", "gemini-3.8"]):
-                    # Gemini 3 series (3.7, 3.6, dsb): aktifkan thinking_level="HIGH" untuk penalaran mendalam & akurat
-                    gen_config = types.GenerateContentConfig(
-                        thinking_config=types.ThinkingConfig(
-                            thinking_level="HIGH",
-                            include_thoughts=False
-                        ),
-                        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
-                    )
-                elif "gemini-2.5" in model_name:
-                    # Gemini 2.5 series: gunakan thinking_budget=-1 (dinamis)
-                    gen_config = types.GenerateContentConfig(
-                        thinking_config=types.ThinkingConfig(
-                            thinking_budget=-1,
-                            include_thoughts=False
-                        ),
-                        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
-                    )
-
-                try:
-                    response = self._client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=gen_config
-                    )
-                except Exception as call_err:
-                    if gen_config is not None and any(kw in str(call_err).lower() for kw in ["thinking", "budget", "invalid"]):
-                        print(f"[AIService] Model {model_name} dengan thinking_config gagal ({call_err}), mencoba tanpa thinking_config...")
-                        response = self._client.models.generate_content(
-                            model=model_name,
-                            contents=prompt
-                        )
-                    else:
-                        raise call_err
+                gen_config = self._get_thinking_config(model_name)
+                response = self._client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=gen_config
+                )
 
                 # Ambil teks jawaban bersih (hanya teks non-thought)
                 answer_text = ""
@@ -209,12 +180,43 @@ class AIService:
                     }
             except Exception as err:
                 last_err = str(err)
-                print(f"[AIService] Model {model_name} gagal: {err}, mencoba model fallback berikutnya...")
+                print(f"[AIService] Model {model_name} mengalami kendala: {err}. Langsung fallback ke model berikutnya...")
 
         return {
             "success": False,
             "error": f"Semua model Gemini gagal merespons. Error terakhir: {last_err}"
         }
+
+    def _get_thinking_config(self, model_name: str) -> Optional[Any]:
+        """
+        Mendapatkan GenerateContentConfig dengan konfigurasi thinking yang tepat
+        sesuai standar arsitektur Google Gemini (per 2026):
+        - Gemini 3.x series (3.8, 3.7, 3.6, 3.5, 3.5-lite, flash-latest):
+          Gunakan thinking_level="HIGH" tanpa menyertakan raw thoughts (include_thoughts=False).
+        - Gemini 2.5 series (legacy):
+          Gunakan thinking_budget=-1 (dinamis) tanpa menyertakan thoughts.
+        - Model lain / non-thinking:
+          None (tanpa parameter thinking_config agar tidak memicu error invalid argument).
+        """
+        if not _genai_available:
+            return None
+
+        m = model_name.lower()
+        if any(v in m for v in ["gemini-3", "flash-latest"]):
+            return types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    thinking_level="HIGH",
+                    include_thoughts=False
+                )
+            )
+        elif "gemini-2.5" in m:
+            return types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=-1,
+                    include_thoughts=False
+                )
+            )
+        return None
 
     def process(self, ocr_text: Optional[str] = None, image_data: Optional[str] = None, prompt: Optional[str] = None) -> Dict[str, Any]:
         """
