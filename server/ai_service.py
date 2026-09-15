@@ -32,8 +32,8 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_confi
 
 # Model Gemini gratis & cepat versi terbaru (prioritas berurutan)
 DEFAULT_MODELS = [
-    "gemini-3.7-flash",
     "gemini-3.6-flash",
+    "gemini-3.7-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-flash-latest",
@@ -51,7 +51,7 @@ class AIService:
         """Memuat konfigurasi dari file atau environment variable."""
         cfg = {
             "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
-            "model": "gemini-3.7-flash",
+            "model": "gemini-3.6-flash",
             "prompt_template": "Tolong jawab, selesaikan, atau jelaskan persoalan ini dengan tepat, padat, terstruktur, dan to the point. Gunakan format teks biasa yang mudah dibaca. Gunakan heading (#) atau bold (**) hanya jika benar-benar membantu, jangan di setiap baris. Untuk rumus matematika, tulis dalam bentuk teks biasa (misal: x^2 + 3x = 0)."
         }
         if os.path.exists(CONFIG_PATH):
@@ -146,7 +146,7 @@ class AIService:
 
         # Coba model berurutan jika ada kuota habis / rate limit
         last_err = ""
-        preferred_model = self.config.get("model", "gemini-3.7-flash")
+        preferred_model = self.config.get("model", "gemini-3.6-flash")
         candidate_models = [preferred_model] + [m for m in DEFAULT_MODELS if m != preferred_model]
 
         for model_name in candidate_models:
