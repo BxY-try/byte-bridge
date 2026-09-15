@@ -1,22 +1,39 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'socket_service.dart';
 
+/// Pilihan rasio kamera (Aspect Ratio)
+enum CameraAspectRatioMode {
+  ratio4x3('4:3', 3.0 / 4.0, 'Standar 4:3 (Dokumen/Buku)'),
+  ratio16x9('16:9', 9.0 / 16.0, 'Layar Lebar 16:9 (Cinematic)'),
+  ratio1x1('1:1', 1.0, 'Persegi 1:1 (Fokus 1 Soal)'),
+  full('Full', null, 'Layar Penuh (Full Screen)');
+
+  final String label;
+  final double? ratio; // width / height pada orientasi potret
+  final String description;
+
+  const CameraAspectRatioMode(this.label, this.ratio, this.description);
+}
+
 class KilatCameraScreen extends StatefulWidget {
   final SocketService socketService;
   final String? prompt;
   final Function(int shotCount, File? lastImage, String lastOcr)? onFinished;
+  final CameraAspectRatioMode initialRatio;
 
   const KilatCameraScreen({
     Key? key,
     required this.socketService,
     this.prompt,
     this.onFinished,
+    this.initialRatio = CameraAspectRatioMode.ratio4x3,
   }) : super(key: key);
 
   @override
@@ -30,6 +47,10 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   int _selectedCameraIndex = 0;
   bool _isCameraReady = false;
   String? _initError;
+
+  // Rasio Kamera (Aspect Ratio)
+  late CameraAspectRatioMode _aspectRatioMode;
+  bool _showRatioSelector = false;
 
   // Zoom
   double _currentZoom = 1.0;
@@ -72,6 +93,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   @override
   void initState() {
     super.initState();
+    _aspectRatioMode = widget.initialRatio;
     _zoomNotifier = ValueNotifier<double>(1.0);
 
     _focusAnimController = AnimationController(
@@ -316,9 +338,25 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
 
     HapticFeedback.selectionClick();
 
-    // Normalisasi koordinat ke sensor kamera (0.0 s/d 1.0)
-    final double nx = (localPos.dx / previewWidth).clamp(0.0, 1.0);
-    final double ny = (localPos.dy / previewHeight).clamp(0.0, 1.0);
+    // Hitung koordinat sensor dengan memperhitungkan pemotongan BoxFit.cover
+    final double targetRatio = previewWidth / previewHeight;
+    double nx = localPos.dx / previewWidth;
+    double ny = localPos.dy / previewHeight;
+
+    if (targetRatio > sensorPortraitRatio) {
+      // Sensor lebih tinggi dibanding jendela preview (crop atas-bawah)
+      final double renderedHeight = previewWidth / sensorPortraitRatio;
+      final double dyOffset = (renderedHeight - previewHeight) / 2.0;
+      ny = (localPos.dy + dyOffset) / renderedHeight;
+    } else if (targetRatio < sensorPortraitRatio) {
+      // Sensor lebih lebar dibanding jendela preview (crop kiri-kanan)
+      final double renderedWidth = previewHeight * sensorPortraitRatio;
+      final double dxOffset = (renderedWidth - previewWidth) / 2.0;
+      nx = (localPos.dx + dxOffset) / renderedWidth;
+    }
+
+    nx = nx.clamp(0.0, 1.0);
+    ny = ny.clamp(0.0, 1.0);
 
     try {
       if (_controller!.value.focusPointSupported) {
@@ -355,14 +393,33 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     });
   }
 
-  Future<void> _triggerAfAeLock(Offset localPos, double previewWidth, double previewHeight) async {
+  Future<void> _triggerAfAeLock(
+    Offset localPos,
+    double previewWidth,
+    double previewHeight,
+    double sensorPortraitRatio,
+  ) async {
     if (_controller == null || !_isCameraReady) return;
 
     HapticFeedback.heavyImpact();
 
-    // Normalisasi koordinat ke sensor kamera (0.0 s/d 1.0)
-    final double nx = (localPos.dx / previewWidth).clamp(0.0, 1.0);
-    final double ny = (localPos.dy / previewHeight).clamp(0.0, 1.0);
+    // Hitung koordinat sensor dengan memperhitungkan pemotongan BoxFit.cover
+    final double targetRatio = previewWidth / previewHeight;
+    double nx = localPos.dx / previewWidth;
+    double ny = localPos.dy / previewHeight;
+
+    if (targetRatio > sensorPortraitRatio) {
+      final double renderedHeight = previewWidth / sensorPortraitRatio;
+      final double dyOffset = (renderedHeight - previewHeight) / 2.0;
+      ny = (localPos.dy + dyOffset) / renderedHeight;
+    } else if (targetRatio < sensorPortraitRatio) {
+      final double renderedWidth = previewHeight * sensorPortraitRatio;
+      final double dxOffset = (renderedWidth - previewWidth) / 2.0;
+      nx = (localPos.dx + dxOffset) / renderedWidth;
+    }
+
+    nx = nx.clamp(0.0, 1.0);
+    ny = ny.clamp(0.0, 1.0);
 
     try {
       if (_controller!.value.focusPointSupported) {
@@ -421,6 +478,87 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     _showStatus('🔓 Kunci Fokus dilepas (Auto Focus aktif)');
   }
 
+  // ========== CROPPING GAMBAR SESUAI RASIO TERPILIH ==========
+  Future<File> _cropImageToRatio(File originalFile, double targetRatio) async {
+    try {
+      final bytes = await originalFile.readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+
+      final double imgW = image.width.toDouble();
+      final double imgH = image.height.toDouble();
+
+      double cropW, cropH, cropX, cropY;
+
+      if (imgW < imgH) {
+        // Buffer potret native (lebar < tinggi)
+        final currentRatio = imgW / imgH;
+        if ((currentRatio - targetRatio).abs() < 0.02) {
+          image.dispose();
+          codec.dispose();
+          return originalFile;
+        }
+        if (currentRatio > targetRatio) {
+          cropW = imgH * targetRatio;
+          cropH = imgH;
+          cropX = (imgW - cropW) / 2.0;
+          cropY = 0.0;
+        } else {
+          cropW = imgW;
+          cropH = imgW / targetRatio;
+          cropX = 0.0;
+          cropY = (imgH - cropH) / 2.0;
+        }
+      } else {
+        // Buffer lanskap dari sensor hardware (lebar >= tinggi)
+        // Di layar potret: sumbu vertikal layar = lebar sensor (imgW), sumbu horizontal layar = tinggi sensor (imgH)
+        final currentPortraitRatio = imgH / imgW;
+        if ((currentPortraitRatio - targetRatio).abs() < 0.02) {
+          image.dispose();
+          codec.dispose();
+          return originalFile;
+        }
+        if (currentPortraitRatio > targetRatio) {
+          cropH = imgW * targetRatio;
+          cropW = imgW;
+          cropX = 0.0;
+          cropY = (imgH - cropH) / 2.0;
+        } else {
+          cropH = imgH;
+          cropW = imgH / targetRatio;
+          cropX = (imgW - cropW) / 2.0;
+          cropY = 0.0;
+        }
+      }
+
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, cropW, cropH));
+      final srcRect = Rect.fromLTWH(cropX, cropY, cropW, cropH);
+      final dstRect = Rect.fromLTWH(0, 0, cropW, cropH);
+      canvas.drawImageRect(image, srcRect, dstRect, Paint());
+
+      final picture = recorder.endRecording();
+      final croppedImage = await picture.toImage(cropW.round(), cropH.round());
+      final byteData = await croppedImage.toByteData(format: ui.ImageByteFormat.png);
+
+      image.dispose();
+      picture.dispose();
+      croppedImage.dispose();
+      codec.dispose();
+
+      if (byteData == null) return originalFile;
+
+      final croppedPath = originalFile.path.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), '_ratio.png');
+      final croppedFile = File(croppedPath);
+      await croppedFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+      return croppedFile;
+    } catch (e) {
+      debugPrint('Error cropping image to ratio: $e');
+      return originalFile;
+    }
+  }
+
   // ========== SHUTTER KILAT: JEPRET BERUNTUN TANPA KONFIRMASI ==========
   Future<void> _captureInstant() async {
     if (_controller == null || !_isCameraReady || _isCapturing) return;
@@ -442,6 +580,10 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
       final XFile photo = await _controller!.takePicture();
       final capturedFile = File(photo.path);
 
+      // Hitung rasio target saat pemotretan berlangsung
+      final double targetRatio = _aspectRatioMode.ratio ??
+          (MediaQuery.of(context).size.width / MediaQuery.of(context).size.height);
+
       setState(() {
         _lastCapturedFile = capturedFile;
       });
@@ -449,7 +591,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
       _showStatus('📸 Soal #$_shotCount — Memproses OCR & kirim ke PC...', isPersistent: true);
 
       // OCR & Pengiriman dijalankan di background tanpa memblokir kamera
-      _processOcrAndSend(capturedFile, _shotCount);
+      _processOcrAndSend(capturedFile, _shotCount, targetRatio);
     } catch (e) {
       debugPrint('Take picture error: $e');
       _showStatus('❌ Gagal jepret: $e');
@@ -460,10 +602,26 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     }
   }
 
-  Future<void> _processOcrAndSend(File photoFile, int shotIndex) async {
+  Future<void> _processOcrAndSend(File photoFile, int shotIndex, double targetRatio) async {
+    File effectiveFile = photoFile;
+
+    // Jika pengguna memilih rasio selain Full, crop gambar agar sesuai bingkai yang dilihat pengguna
+    if (_aspectRatioMode != CameraAspectRatioMode.full) {
+      try {
+        effectiveFile = await _cropImageToRatio(photoFile, targetRatio);
+        if (mounted) {
+          setState(() {
+            _lastCapturedFile = effectiveFile;
+          });
+        }
+      } catch (e) {
+        debugPrint('Crop failed, fallback to original: $e');
+      }
+    }
+
     String ocrResult = '';
     try {
-      final inputImage = InputImage.fromFilePath(photoFile.path);
+      final inputImage = InputImage.fromFilePath(effectiveFile.path);
       final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
       final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
       await textRecognizer.close();
@@ -489,7 +647,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
       // Fallback: Kirim base64 gambar langsung ke server jika ML Kit HP kosong
       _showStatus('🔄 Soal #$shotIndex — Mengirim gambar ke server PC...');
       try {
-        final bytes = await photoFile.readAsBytes();
+        final bytes = await effectiveFile.readAsBytes();
         final base64Img = base64Encode(bytes);
         widget.socketService.sendAiQuery(imageBase64: base64Img, prompt: prompt);
       } catch (e) {
@@ -572,109 +730,129 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final screenWidth = constraints.maxWidth;
+        final screenHeight = constraints.maxHeight;
+        final screenRatio = screenWidth / screenHeight;
+
         // Sensor camera ratio handling:
         // Pada Flutter camera portrait, raw ratio biasanya > 1.0 (misal 16/9 = 1.77 atau 4/3 = 1.33).
         // Di layar potret HP, rasio yang benar adalah 1.0 / rawRatio (misal 9/16 = 0.56 atau 3/4 = 0.75).
         final rawRatio = _controller!.value.aspectRatio;
-        final previewRatio = rawRatio > 1.0 ? (1.0 / rawRatio) : rawRatio;
+        final sensorPortraitRatio = rawRatio > 1.0 ? (1.0 / rawRatio) : rawRatio;
+
+        // Tentukan rasio target sesuai pilihan pengguna
+        final double targetRatio = _aspectRatioMode.ratio ?? screenRatio;
 
         return Stack(
           fit: StackFit.expand,
           children: [
-            // 1. VIEWFINDER KAMERA DENGAN SEPARATED GESTURE HANDLING
+            // Background hitam penuh
+            Container(color: Colors.black),
+
+            // 1. VIEWFINDER KAMERA DENGAN SEPARATED GESTURE HANDLING & BEBAS DISTORSI
             Center(
               child: AspectRatio(
-                aspectRatio: previewRatio,
+                aspectRatio: targetRatio,
                 child: LayoutBuilder(
                   builder: (context, previewConstraints) {
                     final previewWidth = previewConstraints.maxWidth;
                     final previewHeight = previewConstraints.maxHeight;
 
-                    return Listener(
-                      behavior: HitTestBehavior.opaque,
-                      onPointerDown: (event) {
-                        _pointers++;
-                        if (_pointers == 1) {
-                          _pointerDownPos = event.localPosition;
-                          _pointerDownTime = DateTime.now();
-                          _hasMoved = false;
-                          _isLongPressTriggered = false;
+                    return ClipRect(
+                      child: Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerDown: (event) {
+                          _pointers++;
+                          if (_pointers == 1) {
+                            _pointerDownPos = event.localPosition;
+                            _pointerDownTime = DateTime.now();
+                            _hasMoved = false;
+                            _isLongPressTriggered = false;
 
-                          _longPressTimer?.cancel();
-                          _longPressTimer = Timer(const Duration(milliseconds: 500), () {
-                            if (_pointers == 1 && !_hasMoved && mounted && _pointerDownPos != null) {
-                              _isLongPressTriggered = true;
-                              _triggerAfAeLock(_pointerDownPos!, previewWidth, previewHeight);
-                            }
-                          });
-                        } else if (_pointers >= 2) {
-                          // Gesture 2 jari (pinch): Batalkan long press & sembunyikan kotak fokus sementara jika tidak terkunci
-                          _longPressTimer?.cancel();
-                          _hasMoved = true;
-                          if (!_isFocusLocked) {
-                            setState(() => _focusPoint = null);
-                          }
-                          _baseZoom = _zoomNotifier.value;
-                        }
-                      },
-                      onPointerMove: (event) {
-                        if (_pointers == 1 && _pointerDownPos != null) {
-                          if ((event.localPosition - _pointerDownPos!).distance > 12.0) {
-                            _hasMoved = true;
                             _longPressTimer?.cancel();
+                            _longPressTimer = Timer(const Duration(milliseconds: 500), () {
+                              if (_pointers == 1 && !_hasMoved && mounted && _pointerDownPos != null) {
+                                _isLongPressTriggered = true;
+                                _triggerAfAeLock(_pointerDownPos!, previewWidth, previewHeight, sensorPortraitRatio);
+                              }
+                            });
+                          } else if (_pointers >= 2) {
+                            // Gesture 2 jari (pinch): Batalkan long press & sembunyikan kotak fokus sementara jika tidak terkunci
+                            _longPressTimer?.cancel();
+                            _hasMoved = true;
+                            if (!_isFocusLocked) {
+                              setState(() => _focusPoint = null);
+                            }
+                            _baseZoom = _zoomNotifier.value;
                           }
-                        }
-                      },
-                      onPointerUp: (event) {
-                        _longPressTimer?.cancel();
-                        if (_pointers == 1 && !_hasMoved && !_isLongPressTriggered && _pointerDownTime != null) {
-                          final duration = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
-                          if (duration < 400) {
-                            _handleTapToFocus(event.localPosition, previewWidth, previewHeight);
+                        },
+                        onPointerMove: (event) {
+                          if (_pointers == 1 && _pointerDownPos != null) {
+                            if ((event.localPosition - _pointerDownPos!).distance > 12.0) {
+                              _hasMoved = true;
+                              _longPressTimer?.cancel();
+                            }
                           }
-                        }
-                        _pointers = (_pointers - 1).clamp(0, 10);
-                        if (_pointers == 0) {
+                        },
+                        onPointerUp: (event) {
+                          _longPressTimer?.cancel();
+                          if (_pointers == 1 && !_hasMoved && !_isLongPressTriggered && _pointerDownTime != null) {
+                            final duration = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
+                            if (duration < 400) {
+                              _handleTapToFocus(event.localPosition, previewWidth, previewHeight, sensorPortraitRatio);
+                            }
+                          }
+                          _pointers = (_pointers - 1).clamp(0, 10);
+                          if (_pointers == 0) {
+                            _pointerDownPos = null;
+                            _pointerDownTime = null;
+                            _isLongPressTriggered = false;
+                          }
+                        },
+                        onPointerCancel: (event) {
+                          _pointers = 0;
+                          _longPressTimer?.cancel();
                           _pointerDownPos = null;
                           _pointerDownTime = null;
                           _isLongPressTriggered = false;
-                        }
-                      },
-                      onPointerCancel: (event) {
-                        _pointers = 0;
-                        _longPressTimer?.cancel();
-                        _pointerDownPos = null;
-                        _pointerDownTime = null;
-                        _isLongPressTriggered = false;
-                      },
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onScaleStart: (details) {
-                          _baseZoom = _zoomNotifier.value;
                         },
-                        onScaleUpdate: (details) {
-                          if (details.pointerCount >= 2) {
-                            _onPinchZoomUpdate(details.scale);
-                          }
-                        },
-                        onScaleEnd: (details) {
-                          _onPinchZoomEnd();
-                        },
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            CameraPreview(_controller!),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onScaleStart: (details) {
+                            _baseZoom = _zoomNotifier.value;
+                          },
+                          onScaleUpdate: (details) {
+                            if (details.pointerCount >= 2) {
+                              _onPinchZoomUpdate(details.scale);
+                            }
+                          },
+                          onScaleEnd: (details) {
+                            _onPinchZoomEnd();
+                          },
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              // Feed kamera diskalakan proporsional tanpa distorsi (FittedBox cover)
+                              FittedBox(
+                                fit: BoxFit.cover,
+                                child: SizedBox(
+                                  width: previewWidth,
+                                  height: previewWidth / sensorPortraitRatio,
+                                  child: CameraPreview(_controller!),
+                                ),
+                              ),
 
-                            // Kotak Reticle Indikator Fokus (Tap / AF/AE Lock)
-                            _buildFocusIndicator(previewWidth, previewHeight),
+                              // Kotak Reticle Indikator Fokus (Tap / AF/AE Lock)
+                              _buildFocusIndicator(previewWidth, previewHeight),
 
-                            // Efek Flash Shutter Snap (Layar kilat 70ms saat shutter ditekan)
-                            AnimatedOpacity(
-                              opacity: _shutterFlashOpacity,
-                              duration: const Duration(milliseconds: 70),
-                              child: Container(color: Colors.white),
-                            ),
-                          ],
+                              // Efek Flash Shutter Snap (Layar kilat 70ms saat shutter ditekan)
+                              AnimatedOpacity(
+                                opacity: _shutterFlashOpacity,
+                                duration: const Duration(milliseconds: 70),
+                                child: Container(color: Colors.white),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
@@ -695,7 +873,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                     icon: Icons.close,
                     onTap: _finishAndExit,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
 
                   // Badge Mode Kilat & Shot Count
                   Expanded(
@@ -733,6 +911,10 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                     ),
                   ),
 
+                  // Tombol Pemilih Rasio Kamera (Aspect Ratio)
+                  _buildRatioButton(),
+                  const SizedBox(width: 8),
+
                   // Tombol Flash
                   _buildFrostedButton(
                     icon: _flashMode == FlashMode.auto
@@ -760,9 +942,20 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
               ),
             ),
 
+            // 2b. MENU FLOATING PEMILIHAN RASIO KAMERA
+            if (_showRatioSelector)
+              Positioned(
+                top: 64,
+                left: 16,
+                right: 16,
+                child: Center(
+                  child: _buildRatioSelectorBar(),
+                ),
+              ),
+
             // 3. FLOATING STATUS BANNER (HUD)
             Positioned(
-              top: 72,
+              top: _showRatioSelector ? 116 : 72,
               left: 20,
               right: 20,
               child: AnimatedOpacity(
@@ -803,7 +996,6 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                 ),
               ),
             ),
-
             // 4. BOTTOM BAR: FLOATING ZOOM BUBBLE + ZOOM PILLS + SHUTTER + THUMBNAIL
             Positioned(
               bottom: 20,
@@ -1182,6 +1374,108 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
             fontWeight: FontWeight.bold,
           ),
         ),
+      ),
+    );
+  }
+
+  // ========== WIDGET TOMBOL & SELECTOR RASIO KAMERA ==========
+  void _setAspectRatio(CameraAspectRatioMode mode) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _aspectRatioMode = mode;
+      _showRatioSelector = false;
+      _focusPoint = null;
+      _isFocusLocked = false;
+    });
+    _showStatus('📐 Rasio Kamera: ${mode.description}');
+  }
+
+  void _toggleRatioSelector() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _showRatioSelector = !_showRatioSelector;
+    });
+  }
+
+  Widget _buildRatioButton() {
+    return GestureDetector(
+      onTap: _toggleRatioSelector,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: _showRatioSelector
+              ? const Color(0xFFF59E0B)
+              : Colors.black.withOpacity(0.55),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: _showRatioSelector ? const Color(0xFFF59E0B) : Colors.white24,
+            width: 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.aspect_ratio_rounded,
+              size: 14,
+              color: _showRatioSelector ? Colors.black : const Color(0xFFF59E0B),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              _aspectRatioMode.label,
+              style: TextStyle(
+                color: _showRatioSelector ? Colors.black : Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 11.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRatioSelectorBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.88),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFF59E0B), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.6),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: CameraAspectRatioMode.values.map((mode) {
+          final isSelected = mode == _aspectRatioMode;
+          return GestureDetector(
+            onTap: () => _setAspectRatio(mode),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFFF59E0B) : Colors.white.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                mode.label,
+                style: TextStyle(
+                  color: isSelected ? Colors.black : Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
