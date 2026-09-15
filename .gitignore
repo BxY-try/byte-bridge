@@ -9,6 +9,7 @@ venv/
 dist/
 build/
 build-output/
+build_output/
 server/ai_config.json
 .env
 
