@@ -48,6 +48,12 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   bool _isCameraReady = false;
   String? _initError;
 
+  double get _sensorPortraitRatio {
+    if (_controller == null || !_controller!.value.isInitialized) return 3.0 / 4.0;
+    final rawRatio = _controller!.value.aspectRatio;
+    return rawRatio > 1.0 ? (1.0 / rawRatio) : rawRatio;
+  }
+
   // Rasio Kamera (Aspect Ratio)
   late CameraAspectRatioMode _aspectRatioMode;
   bool _showRatioSelector = false;
@@ -339,6 +345,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     HapticFeedback.selectionClick();
 
     // Hitung koordinat sensor dengan memperhitungkan pemotongan BoxFit.cover
+    final double sensorPortraitRatio = _sensorPortraitRatio;
     final double targetRatio = previewWidth / previewHeight;
     double nx = localPos.dx / previewWidth;
     double ny = localPos.dy / previewHeight;
@@ -397,13 +404,13 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     Offset localPos,
     double previewWidth,
     double previewHeight,
-    double sensorPortraitRatio,
   ) async {
     if (_controller == null || !_isCameraReady) return;
 
     HapticFeedback.heavyImpact();
 
     // Hitung koordinat sensor dengan memperhitungkan pemotongan BoxFit.cover
+    final double sensorPortraitRatio = _sensorPortraitRatio;
     final double targetRatio = previewWidth / previewHeight;
     double nx = localPos.dx / previewWidth;
     double ny = localPos.dy / previewHeight;
@@ -773,7 +780,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                             _longPressTimer = Timer(const Duration(milliseconds: 500), () {
                               if (_pointers == 1 && !_hasMoved && mounted && _pointerDownPos != null) {
                                 _isLongPressTriggered = true;
-                                _triggerAfAeLock(_pointerDownPos!, previewWidth, previewHeight, sensorPortraitRatio);
+                                _triggerAfAeLock(_pointerDownPos!, previewWidth, previewHeight);
                               }
                             });
                           } else if (_pointers >= 2) {
@@ -799,7 +806,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                           if (_pointers == 1 && !_hasMoved && !_isLongPressTriggered && _pointerDownTime != null) {
                             final duration = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
                             if (duration < 400) {
-                              _handleTapToFocus(event.localPosition, previewWidth, previewHeight, sensorPortraitRatio);
+                              _handleTapToFocus(event.localPosition, previewWidth, previewHeight);
                             }
                           }
                           _pointers = (_pointers - 1).clamp(0, 10);
