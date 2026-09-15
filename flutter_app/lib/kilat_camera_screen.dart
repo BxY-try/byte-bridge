@@ -36,16 +36,29 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   double _baseZoom = 1.0;
   double _minZoom = 1.0;
   double _maxZoom = 8.0;
+  late final ValueNotifier<double> _zoomNotifier;
+  bool _showZoomBubble = false;
+  Timer? _zoomBubbleTimer;
+  DateTime _lastZoomApplyTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   // Flash
   FlashMode _flashMode = FlashMode.auto;
 
   // Focus & AF/AE Lock
   Offset? _focusPoint;
+  double _focusOpacity = 1.0;
   bool _isFocusLocked = false;
   Timer? _focusDismissTimer;
   late AnimationController _focusAnimController;
   late Animation<double> _focusScaleAnim;
+
+  // Pointer tracking untuk Tap vs Long Press vs Pinch
+  int _pointers = 0;
+  Offset? _pointerDownPos;
+  DateTime? _pointerDownTime;
+  bool _hasMoved = false;
+  bool _isLongPressTriggered = false;
+  Timer? _longPressTimer;
 
   // Shutter & Capturing
   bool _isCapturing = false;
@@ -59,11 +72,13 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   @override
   void initState() {
     super.initState();
+    _zoomNotifier = ValueNotifier<double>(1.0);
+
     _focusAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 260),
     );
-    _focusScaleAnim = Tween<double>(begin: 1.4, end: 1.0).animate(
+    _focusScaleAnim = Tween<double>(begin: 1.35, end: 1.0).animate(
       CurvedAnimation(parent: _focusAnimController, curve: Curves.easeOutBack),
     );
 
@@ -88,6 +103,8 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     setState(() {
       _isCameraReady = false;
       _initError = null;
+      _focusPoint = null;
+      _isFocusLocked = false;
     });
 
     try {
@@ -124,6 +141,8 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
       }
 
       _currentZoom = _minZoom;
+      _zoomNotifier.value = _minZoom;
+
       try {
         await controller.setZoomLevel(_currentZoom);
         await controller.setFlashMode(_flashMode);
@@ -149,8 +168,11 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   @override
   void dispose() {
     _focusDismissTimer?.cancel();
+    _zoomBubbleTimer?.cancel();
+    _longPressTimer?.cancel();
     _statusResetTimer?.cancel();
     _focusAnimController.dispose();
+    _zoomNotifier.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -163,7 +185,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
         if (mounted) {
           setState(() {
             _statusMessage = _isFocusLocked
-                ? '🔒 Fokus Terkunci — Siap jepret ⚡'
+                ? '🔒 AF/AE TERKUNCI — Ketuk layar untuk membuka kunci'
                 : 'Arahkan ke soal lalu tap shutter ⚡';
           });
         }
@@ -171,16 +193,68 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     }
   }
 
-  // ========== FITUR ZOOM ==========
+  // ========== FITUR ZOOM (PINCH & CHIPS) ==========
+
   Future<void> _setZoom(double zoom) async {
     if (_controller == null || !_isCameraReady) return;
     final clamped = zoom.clamp(_minZoom, _maxZoom);
+    _zoomNotifier.value = clamped;
+    _currentZoom = clamped;
+
     try {
       await _controller!.setZoomLevel(clamped);
-      setState(() => _currentZoom = clamped);
     } catch (e) {
       debugPrint('Set zoom error: $e');
     }
+
+    if (mounted) {
+      setState(() => _showZoomBubble = true);
+    }
+
+    _zoomBubbleTimer?.cancel();
+    _zoomBubbleTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) setState(() => _showZoomBubble = false);
+    });
+  }
+
+  void _onPinchZoomUpdate(double scale) {
+    if (_controller == null || !_isCameraReady) return;
+
+    final targetZoom = (_baseZoom * scale).clamp(_minZoom, _maxZoom);
+    _zoomNotifier.value = targetZoom;
+
+    if (!_showZoomBubble && mounted) {
+      setState(() => _showZoomBubble = true);
+    }
+
+    // Throttling ~30ms agar channel Camera2 tidak tersendat
+    final now = DateTime.now();
+    if (now.difference(_lastZoomApplyTime).inMilliseconds >= 32) {
+      _lastZoomApplyTime = now;
+      _controller!.setZoomLevel(targetZoom).catchError((e) {
+        debugPrint('Throttled zoom error: $e');
+      });
+    }
+  }
+
+  void _onPinchZoomEnd() {
+    if (_controller == null || !_isCameraReady) return;
+
+    final finalZoom = _zoomNotifier.value;
+    _controller!.setZoomLevel(finalZoom).catchError((e) {
+      debugPrint('Final zoom error: $e');
+    });
+
+    if (mounted) {
+      setState(() {
+        _currentZoom = finalZoom;
+      });
+    }
+
+    _zoomBubbleTimer?.cancel();
+    _zoomBubbleTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) setState(() => _showZoomBubble = false);
+    });
   }
 
   // ========== FITUR FLASH ==========
@@ -229,70 +303,125 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     await _initCamera(nextIndex);
   }
 
-  // ========== TAP-TO-FOCUS & AF/AE LOCK (LONG PRESS) ==========
-  void _onTapToFocus(TapUpDetails details, BoxConstraints constraints) async {
-    if (_controller == null || !_isCameraReady) return;
-    HapticFeedback.selectionClick();
+  // ========== TAP-TO-FOCUS & AF/AE LOCK ==========
 
-    // Jika sebelumnya AF/AE terkunci, tap biasa akan membuka kunci kembali ke mode auto
+  Future<void> _handleTapToFocus(Offset localPos, double previewWidth, double previewHeight) async {
+    if (_controller == null || !_isCameraReady) return;
+
+    // Jika sedang dalam kondisi terkunci, ketuk sekali akan membuka kuncinya
     if (_isFocusLocked) {
-      try {
-        await _controller!.setFocusMode(FocusMode.auto);
-        await _controller!.setExposureMode(ExposureMode.auto);
-      } catch (_) {}
-      setState(() => _isFocusLocked = false);
-      _showStatus('🔓 Kunci Fokus dilepas (Auto Focus aktif)');
+      await _unlockAfAe();
+      return;
     }
 
-    final double x = (details.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0);
-    final double y = (details.localPosition.dy / constraints.maxHeight).clamp(0.0, 1.0);
+    HapticFeedback.selectionClick();
+
+    // Normalisasi koordinat ke sensor kamera (0.0 s/d 1.0)
+    final double nx = (localPos.dx / previewWidth).clamp(0.0, 1.0);
+    final double ny = (localPos.dy / previewHeight).clamp(0.0, 1.0);
 
     try {
-      await _controller!.setFocusPoint(Offset(x, y));
-      await _controller!.setExposurePoint(Offset(x, y));
+      if (_controller!.value.focusPointSupported) {
+        await _controller!.setFocusPoint(Offset(nx, ny));
+      }
+      if (_controller!.value.exposurePointSupported) {
+        await _controller!.setExposurePoint(Offset(nx, ny));
+      }
+      await _controller!.setFocusMode(FocusMode.auto);
+      await _controller!.setExposureMode(ExposureMode.auto);
     } catch (e) {
-      debugPrint('Focus error: $e');
+      debugPrint('Set focus point error: $e');
     }
 
     setState(() {
-      _focusPoint = details.localPosition;
+      _focusPoint = localPos;
+      _focusOpacity = 1.0;
+      _isFocusLocked = false;
     });
 
     _focusAnimController.forward(from: 0.0);
+
+    // Auto-dismiss kotak fokus setelah 2.5 detik dengan transisi halus
     _focusDismissTimer?.cancel();
-    _focusDismissTimer = Timer(const Duration(milliseconds: 1600), () {
+    _focusDismissTimer = Timer(const Duration(milliseconds: 2500), () {
       if (mounted && !_isFocusLocked) {
-        setState(() => _focusPoint = null);
+        setState(() => _focusOpacity = 0.0);
+        Future.delayed(const Duration(milliseconds: 260), () {
+          if (mounted && !_isFocusLocked && _focusOpacity == 0.0) {
+            setState(() => _focusPoint = null);
+          }
+        });
       }
     });
   }
 
-  void _onLongPressToLockFocus(LongPressStartDetails details, BoxConstraints constraints) async {
+  Future<void> _triggerAfAeLock(Offset localPos, double previewWidth, double previewHeight) async {
     if (_controller == null || !_isCameraReady) return;
+
     HapticFeedback.heavyImpact();
 
-    final double x = (details.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0);
-    final double y = (details.localPosition.dy / constraints.maxHeight).clamp(0.0, 1.0);
+    // Normalisasi koordinat ke sensor kamera (0.0 s/d 1.0)
+    final double nx = (localPos.dx / previewWidth).clamp(0.0, 1.0);
+    final double ny = (localPos.dy / previewHeight).clamp(0.0, 1.0);
 
     try {
-      await _controller!.setFocusPoint(Offset(x, y));
+      if (_controller!.value.focusPointSupported) {
+        await _controller!.setFocusPoint(Offset(nx, ny));
+      }
+      if (_controller!.value.exposurePointSupported) {
+        await _controller!.setExposurePoint(Offset(nx, ny));
+      }
       await _controller!.setFocusMode(FocusMode.locked);
-      await _controller!.setExposurePoint(Offset(x, y));
       await _controller!.setExposureMode(ExposureMode.locked);
     } catch (e) {
       debugPrint('AF/AE Lock error: $e');
     }
 
+    _focusDismissTimer?.cancel();
+
     setState(() {
+      _focusPoint = localPos;
+      _focusOpacity = 1.0;
       _isFocusLocked = true;
-      _focusPoint = details.localPosition;
     });
 
     _focusAnimController.forward(from: 0.0);
-    _showStatus('🔒 AF/AE TERKUNCI! Fokus tidak akan berubah.', isPersistent: true);
+    _showStatus('🔒 AF/AE TERKUNCI — Ketuk layar untuk membuka kunci', isPersistent: true);
   }
 
-  // ========== SHUTTER KILAT: JEPET BERUNTUN TANPA KONFIRMASI ==========
+  Future<void> _unlockAfAe() async {
+    if (_controller == null || !_isCameraReady) return;
+
+    HapticFeedback.selectionClick();
+
+    try {
+      if (_controller!.value.focusPointSupported) {
+        await _controller!.setFocusPoint(null);
+      }
+      if (_controller!.value.exposurePointSupported) {
+        await _controller!.setExposurePoint(null);
+      }
+      await _controller!.setFocusMode(FocusMode.auto);
+      await _controller!.setExposureMode(ExposureMode.auto);
+    } catch (e) {
+      debugPrint('Reset focus mode error: $e');
+    }
+
+    setState(() {
+      _isFocusLocked = false;
+      _focusOpacity = 0.0;
+    });
+
+    Future.delayed(const Duration(milliseconds: 260), () {
+      if (mounted && !_isFocusLocked) {
+        setState(() => _focusPoint = null);
+      }
+    });
+
+    _showStatus('🔓 Kunci Fokus dilepas (Auto Focus aktif)');
+  }
+
+  // ========== SHUTTER KILAT: JEPRET BERUNTUN TANPA KONFIRMASI ==========
   Future<void> _captureInstant() async {
     if (_controller == null || !_isCameraReady || _isCapturing) return;
 
@@ -452,103 +581,104 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
         return Stack(
           fit: StackFit.expand,
           children: [
-            // 1. VIEWFINDER KAMERA (ASPECT RATIO PRESISI — TIDAK GEPENG/PENYOK)
+            // 1. VIEWFINDER KAMERA DENGAN SEPARATED GESTURE HANDLING
             Center(
               child: AspectRatio(
                 aspectRatio: previewRatio,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // Gesture Detector: Pinch-to-zoom & Tap to Focus / Long-press AF/AE Lock
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onScaleStart: (details) {
-                        _baseZoom = _currentZoom;
-                      },
-                      onScaleUpdate: (details) {
-                        final newZoom = _baseZoom * details.scale;
-                        _setZoom(newZoom);
-                      },
-                      onTapUp: (details) => _onTapToFocus(details, constraints),
-                      onLongPressStart: (details) => _onLongPressToLockFocus(details, constraints),
-                      child: CameraPreview(_controller!),
-                    ),
+                child: LayoutBuilder(
+                  builder: (context, previewConstraints) {
+                    final previewWidth = previewConstraints.maxWidth;
+                    final previewHeight = previewConstraints.maxHeight;
 
-                    // Ring Indikator Fokus (Muncul saat tap/long press)
-                    if (_focusPoint != null)
-                      Positioned(
-                        left: _focusPoint!.dx - 36,
-                        top: _focusPoint!.dy - 36,
-                        child: AnimatedBuilder(
-                          animation: _focusAnimController,
-                          builder: (context, child) {
-                            return Transform.scale(
-                              scale: _focusScaleAnim.value,
-                              child: child,
-                            );
-                          },
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 72,
-                                height: 72,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.rectangle,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: _isFocusLocked
-                                        ? const Color(0xFFFBBF24)
-                                        : const Color(0xFFFDE047),
-                                    width: 2.2,
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.4),
-                                      blurRadius: 6,
-                                    ),
-                                  ],
-                                ),
-                                child: _isFocusLocked
-                                    ? const Center(
-                                        child: Icon(
-                                          Icons.lock,
-                                          color: Color(0xFFFBBF24),
-                                          size: 26,
-                                        ),
-                                      )
-                                    : null,
-                              ),
-                              if (_isFocusLocked)
-                                Container(
-                                  margin: const EdgeInsets.only(top: 4),
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFBBF24),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: const Text(
-                                    'AF/AE LOCK',
-                                    style: TextStyle(
-                                      color: Colors.black,
-                                      fontSize: 9.5,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
+                    return Listener(
+                      behavior: HitTestBehavior.opaque,
+                      onPointerDown: (event) {
+                        _pointers++;
+                        if (_pointers == 1) {
+                          _pointerDownPos = event.localPosition;
+                          _pointerDownTime = DateTime.now();
+                          _hasMoved = false;
+                          _isLongPressTriggered = false;
+
+                          _longPressTimer?.cancel();
+                          _longPressTimer = Timer(const Duration(milliseconds: 500), () {
+                            if (_pointers == 1 && !_hasMoved && mounted && _pointerDownPos != null) {
+                              _isLongPressTriggered = true;
+                              _triggerAfAeLock(_pointerDownPos!, previewWidth, previewHeight);
+                            }
+                          });
+                        } else if (_pointers >= 2) {
+                          // Gesture 2 jari (pinch): Batalkan long press & sembunyikan kotak fokus sementara jika tidak terkunci
+                          _longPressTimer?.cancel();
+                          _hasMoved = true;
+                          if (!_isFocusLocked) {
+                            setState(() => _focusPoint = null);
+                          }
+                          _baseZoom = _zoomNotifier.value;
+                        }
+                      },
+                      onPointerMove: (event) {
+                        if (_pointers == 1 && _pointerDownPos != null) {
+                          if ((event.localPosition - _pointerDownPos!).distance > 12.0) {
+                            _hasMoved = true;
+                            _longPressTimer?.cancel();
+                          }
+                        }
+                      },
+                      onPointerUp: (event) {
+                        _longPressTimer?.cancel();
+                        if (_pointers == 1 && !_hasMoved && !_isLongPressTriggered && _pointerDownTime != null) {
+                          final duration = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
+                          if (duration < 400) {
+                            _handleTapToFocus(event.localPosition, previewWidth, previewHeight);
+                          }
+                        }
+                        _pointers = (_pointers - 1).clamp(0, 10);
+                        if (_pointers == 0) {
+                          _pointerDownPos = null;
+                          _pointerDownTime = null;
+                          _isLongPressTriggered = false;
+                        }
+                      },
+                      onPointerCancel: (event) {
+                        _pointers = 0;
+                        _longPressTimer?.cancel();
+                        _pointerDownPos = null;
+                        _pointerDownTime = null;
+                        _isLongPressTriggered = false;
+                      },
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onScaleStart: (details) {
+                          _baseZoom = _zoomNotifier.value;
+                        },
+                        onScaleUpdate: (details) {
+                          if (details.pointerCount >= 2) {
+                            _onPinchZoomUpdate(details.scale);
+                          }
+                        },
+                        onScaleEnd: (details) {
+                          _onPinchZoomEnd();
+                        },
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            CameraPreview(_controller!),
+
+                            // Kotak Reticle Indikator Fokus (Tap / AF/AE Lock)
+                            _buildFocusIndicator(previewWidth, previewHeight),
+
+                            // Efek Flash Shutter Snap (Layar kilat 70ms saat shutter ditekan)
+                            AnimatedOpacity(
+                              opacity: _shutterFlashOpacity,
+                              duration: const Duration(milliseconds: 70),
+                              child: Container(color: Colors.white),
+                            ),
+                          ],
                         ),
                       ),
-
-                    // Efek Flash Shutter Snap (Layar kilat 70ms saat shutter ditekan)
-                    AnimatedOpacity(
-                      opacity: _shutterFlashOpacity,
-                      duration: const Duration(milliseconds: 70),
-                      child: Container(color: Colors.white),
-                    ),
-                  ],
+                    );
+                  },
                 ),
               ),
             ),
@@ -643,14 +773,14 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     decoration: BoxDecoration(
                       color: _isFocusLocked
-                          ? const Color(0xFF78350F).withOpacity(0.9)
+                          ? const Color(0xFF78350F).withOpacity(0.92)
                           : Colors.black.withOpacity(0.72),
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
                         color: _isFocusLocked
                             ? const Color(0xFFFBBF24)
                             : Colors.white12,
-                        width: 1.0,
+                        width: 1.2,
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -674,7 +804,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
               ),
             ),
 
-            // 4. BOTTOM BAR: ZOOM PILLS + SHUTTER + THUMBNAIL
+            // 4. BOTTOM BAR: FLOATING ZOOM BUBBLE + ZOOM PILLS + SHUTTER + THUMBNAIL
             Positioned(
               bottom: 20,
               left: 0,
@@ -682,7 +812,10 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Quick Zoom Pills (1x, 2x, dll.)
+                  // Floating Zoom Bubble saat cubit / zoom
+                  _buildFloatingZoomBubble(),
+
+                  // Quick Zoom Pills (1x, 2x, dynamic)
                   _buildZoomControls(),
                   const SizedBox(height: 18),
 
@@ -806,6 +939,168 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     );
   }
 
+  // ========== WIDGET KOTAK FOKUS (RETICLE KUNING) ==========
+  Widget _buildFocusIndicator(double previewWidth, double previewHeight) {
+    if (_focusPoint == null) return const SizedBox.shrink();
+
+    const double boxSize = 74.0;
+    final double left = (_focusPoint!.dx - boxSize / 2).clamp(8.0, previewWidth - boxSize - 8.0);
+    final double top = (_focusPoint!.dy - boxSize / 2).clamp(8.0, previewHeight - boxSize - 8.0);
+
+    return Positioned(
+      left: left,
+      top: top,
+      child: AnimatedOpacity(
+        opacity: _focusOpacity,
+        duration: const Duration(milliseconds: 240),
+        child: AnimatedBuilder(
+          animation: _focusAnimController,
+          builder: (context, child) {
+            return Transform.scale(
+              scale: _focusScaleAnim.value,
+              child: child,
+            );
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Badge AF/AE LOCK permanen saat mode terkunci
+              if (_isFocusLocked)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B),
+                    borderRadius: BorderRadius.circular(6),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.55),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.lock, color: Colors.black87, size: 11),
+                      SizedBox(width: 4),
+                      Text(
+                        'AF/AE LOCK',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Kotak Fokus Reticle
+              Container(
+                width: boxSize,
+                height: boxSize,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: _isFocusLocked ? const Color(0xFFF59E0B) : const Color(0xFFFFD600),
+                    width: _isFocusLocked ? 2.6 : 2.0,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.45),
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (_isFocusLocked)
+                      const Icon(
+                        Icons.lock_rounded,
+                        color: Color(0xFFF59E0B),
+                        size: 28,
+                      )
+                    else ...[
+                      // Titik tengah reticle
+                      Container(
+                        width: 5,
+                        height: 5,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFFFD600),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      // Indikator exposure sun di samping kanan atas
+                      Positioned(
+                        right: 4,
+                        top: 4,
+                        child: Icon(
+                          Icons.wb_sunny_rounded,
+                          color: const Color(0xFFFFD600).withOpacity(0.9),
+                          size: 13,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ========== WIDGET FLOATING ZOOM BUBBLE ==========
+  Widget _buildFloatingZoomBubble() {
+    return ValueListenableBuilder<double>(
+      valueListenable: _zoomNotifier,
+      builder: (context, zoomValue, child) {
+        return AnimatedOpacity(
+          opacity: _showZoomBubble ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 180),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.75),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.4),
+                  blurRadius: 8,
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.zoom_in, color: Color(0xFFF59E0B), size: 16),
+                const SizedBox(width: 5),
+                Text(
+                  '${zoomValue.toStringAsFixed(1)}x',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13.5,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildFrostedButton({
     required IconData icon,
     required VoidCallback onTap,
@@ -826,37 +1121,47 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   }
 
   Widget _buildZoomControls() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.55),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white12, width: 1.0),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildZoomChip(1.0, '1x'),
-          if (_maxZoom >= 2.0) _buildZoomChip(2.0, '2x'),
-          if (_currentZoom != 1.0 && _currentZoom != 2.0)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Text(
-                '${_currentZoom.toStringAsFixed(1)}x',
-                style: const TextStyle(
-                  color: Color(0xFFFBBF24),
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+    return ValueListenableBuilder<double>(
+      valueListenable: _zoomNotifier,
+      builder: (context, zoomVal, child) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.55),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white12, width: 1.0),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildZoomChip(1.0, '1x', zoomVal),
+              if (_maxZoom >= 2.0) _buildZoomChip(2.0, '2x', zoomVal),
+              if ((zoomVal - 1.0).abs() > 0.15 && (zoomVal - 2.0).abs() > 0.15)
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    '${zoomVal.toStringAsFixed(1)}x',
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-        ],
-      ),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildZoomChip(double zoomLevel, String label) {
-    final isSelected = (_currentZoom - zoomLevel).abs() < 0.15;
+  Widget _buildZoomChip(double zoomLevel, String label, double currentVal) {
+    final isSelected = (currentVal - zoomLevel).abs() < 0.15;
     return GestureDetector(
       onTap: () {
         HapticFeedback.selectionClick();
