@@ -192,31 +192,51 @@ class AIService:
         Mendapatkan GenerateContentConfig dengan konfigurasi thinking yang tepat
         sesuai standar arsitektur Google Gemini (per 2026):
         - Gemini 3.x series (3.8, 3.7, 3.6, 3.5, 3.5-lite, flash-latest):
-          Gunakan thinking_level="HIGH" tanpa menyertakan raw thoughts (include_thoughts=False).
+          Thinking AKTIF dengan thinking_level="HIGH" tanpa menyertakan raw thoughts (include_thoughts=False).
         - Gemini 2.5 series (legacy):
-          Gunakan thinking_budget=-1 (dinamis) tanpa menyertakan thoughts.
-        - Model lain / non-thinking:
-          None (tanpa parameter thinking_config agar tidak memicu error invalid argument).
+          Thinking AKTIF dengan thinking_budget=-1 (dinamis) tanpa menyertakan thoughts.
+        - Model lain / non-thinking (misal Gemini 1.5/2.0):
+          Hanya GenerateContentConfig dasar tanpa thinking_config.
+
+        ========================================================================================
+        PENTING - JANGAN DIHAPUS SAAT REFACTOR:
+        Semua GenerateContentConfig di bawah WAJIB menyertakan:
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+        
+        Alasan:
+        Pada SDK resmi google-genai, jika `config` bernilai None atau AFC tidak di-disable
+        secara eksplisit, SDK menganggap AFC (Automatic Function Calling) aktif secara default.
+        Ketika dipanggil via `client.models.generate_content()`, SDK akan mengeluarkan warning:
+            "Direct use of automatic function calling (AFC) in Models.generate_content is not recommended.
+             Instead, we recommend to use AFC in Chat.send_message..."
+        Dengan menyertakan `disable=True`, warning ini dicegah langsung dari konfigurasi SDK tanpa
+        perlu mematikan logger secara membabi buta.
+        ========================================================================================
         """
         if not _genai_available:
             return None
 
+        afc_config = types.AutomaticFunctionCallingConfig(disable=True)
         m = model_name.lower()
         if any(v in m for v in ["gemini-3", "flash-latest"]):
             return types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
                     thinking_level="HIGH",
                     include_thoughts=False
-                )
+                ),
+                automatic_function_calling=afc_config
             )
         elif "gemini-2.5" in m:
             return types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
                     thinking_budget=-1,
                     include_thoughts=False
-                )
+                ),
+                automatic_function_calling=afc_config
             )
-        return None
+        return types.GenerateContentConfig(
+            automatic_function_calling=afc_config
+        )
 
     def process(self, ocr_text: Optional[str] = None, image_data: Optional[str] = None, prompt: Optional[str] = None) -> Dict[str, Any]:
         """
