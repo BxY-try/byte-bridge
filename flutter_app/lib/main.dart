@@ -209,9 +209,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (mounted) {
           setState(() {
             _state = ConnState.disconnected;
-            if (_isAiLoading || _isKilatProcessing) {
+            if (_isAiLoading) {
               _isAiLoading = false;
-              _isKilatProcessing = false;
               _aiStatusMessage = '❌ Terputus dari PC saat menunggu respon AI.';
             }
           });
@@ -222,9 +221,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (mounted) {
           setState(() {
             _state = ConnState.disconnected;
-            if (_isAiLoading || _isKilatProcessing) {
+            if (_isAiLoading) {
               _isAiLoading = false;
-              _isKilatProcessing = false;
               _aiStatusMessage = '❌ Koneksi terputus ke PC.';
             }
           });
