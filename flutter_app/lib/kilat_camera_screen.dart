@@ -60,6 +60,8 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   bool _showRatioSelector = false;
   double _customHeightRatio = 0.45; // Rentang 0.15 hingga 0.90 dari tinggi layar
   bool _isDraggingCropHandle = false;
+  double _dragStartY = 0.0;
+  double _dragStartRatio = 0.0;
 
   /// Helper penentu rasio target (Single Source of Truth untuk Viewfinder & Seluruh Shutter)
   double _getTargetRatio(double screenWidth, double screenHeight) {
@@ -135,7 +137,9 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
       final isVision = data['mode'] == 'vision';
       if (data['success'] == true) {
         final label = isVision ? 'Soal Figural' : 'Soal';
-        _showStatus('✅ $label #$_shotCount dijawab ($model) di PC!', isPersistent: false);
+        final elapsed = data['elapsed_time'];
+        final timeStr = elapsed != null ? ' (${elapsed}s)' : '';
+        _showStatus('✅ $label #$_shotCount dijawab ($model)$timeStr di PC!', isPersistent: false);
       } else {
         _showStatus('❌ Server PC: ${data['error'] ?? 'Gagal memproses'}', isPersistent: false);
       }
@@ -846,6 +850,9 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
 
         // Tentukan rasio target sesuai pilihan pengguna (Single Source of Truth)
         final double targetRatio = _getTargetRatio(screenWidth, screenHeight);
+        final double effectiveCustomHeight = (_customHeightRatio * screenHeight).clamp(60.0, screenHeight);
+        final double customViewfinderTop = (screenHeight - effectiveCustomHeight) / 2;
+        final double customViewfinderBottom = customViewfinderTop + effectiveCustomHeight;
 
         return Stack(
           fit: StackFit.expand,
@@ -965,15 +972,34 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                           ),
                         ),
 
-                        // Overlay Bingkai & Gagang Geser Tinggi (Khusus Mode Custom)
+                        // Garis tepi penanda bingkai custom (kuning amber)
                         if (_aspectRatioMode == CameraAspectRatioMode.custom)
-                          ..._buildCustomCropOverlay(previewWidth, previewHeight, screenHeight),
+                          IgnorePointer(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: const Color(0xFFF59E0B).withOpacity(0.70),
+                                  width: 1.8,
+                                ),
+                              ),
+                            ),
+                          ),
                       ],
                     );
                   },
                 ),
               ),
             ),
+
+            // 1b. GAGANG RESIZE VIEWFINDER & HUD (Khusus Mode Custom)
+            if (_aspectRatioMode == CameraAspectRatioMode.custom)
+              ..._buildCustomCropOverlay(
+                screenWidth,
+                screenHeight,
+                customViewfinderTop,
+                customViewfinderBottom,
+                effectiveCustomHeight,
+              ),
 
             // 2. TOP BAR OVERLAY
             Positioned(
@@ -985,6 +1011,8 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                   // Tombol Tutup / Selesai (✕)
                   _buildFrostedButton(
                     icon: Icons.close,
+                    iconSize: 18,
+                    padding: const EdgeInsets.all(7.5),
                     onTap: _finishAndExit,
                   ),
                   const SizedBox(width: 8),
@@ -1041,6 +1069,8 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                     iconColor: _flashMode != FlashMode.off
                         ? const Color(0xFFF59E0B)
                         : Colors.white70,
+                    iconSize: 16,
+                    padding: const EdgeInsets.all(7),
                     onTap: _cycleFlash,
                   ),
 
@@ -1049,6 +1079,8 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                     const SizedBox(width: 8),
                     _buildFrostedButton(
                       icon: Icons.flip_camera_android,
+                      iconSize: 16,
+                      padding: const EdgeInsets.all(7),
                       onTap: _switchCamera,
                     ),
                   ],
@@ -1462,17 +1494,19 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     required IconData icon,
     required VoidCallback onTap,
     Color iconColor = Colors.white,
+    double iconSize = 20,
+    EdgeInsetsGeometry padding = const EdgeInsets.all(9),
   }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: padding,
         decoration: BoxDecoration(
           color: Colors.black.withOpacity(0.55),
           shape: BoxShape.circle,
           border: Border.all(color: Colors.white24, width: 1.0),
         ),
-        child: Icon(icon, color: iconColor, size: 22),
+        child: Icon(icon, color: iconColor, size: iconSize),
       ),
     );
   }
@@ -1568,7 +1602,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   Widget _buildRatioButton() {
     String label = _aspectRatioMode.label;
     if (_aspectRatioMode == CameraAspectRatioMode.custom) {
-      label = 'Custom ${(_customHeightRatio * 100).round()}%';
+      label = '${(_customHeightRatio * 100).round()}%';
     }
 
     return GestureDetector(
@@ -1755,72 +1789,88 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
 
   // ========== OVERLAY RESIZE DRAG HANDLES UNTUK MODE CUSTOM ==========
   List<Widget> _buildCustomCropOverlay(
-    double previewWidth,
-    double previewHeight,
+    double screenWidth,
     double screenHeight,
+    double viewfinderTop,
+    double viewfinderBottom,
+    double viewfinderHeight,
   ) {
-    return [
-      // Garis tepi penanda bingkai custom (kuning amber)
-      IgnorePointer(
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: const Color(0xFFF59E0B).withOpacity(0.70),
-              width: 1.8,
-            ),
-          ),
-        ),
-      ),
+    const double handleHitHeight = 52.0;
 
+    return [
       // Gagang Geser Atas (Top Drag Handle)
       Positioned(
-        top: -16,
+        top: (viewfinderTop - (handleHitHeight / 2)).clamp(0.0, screenHeight - handleHitHeight),
         left: 0,
         right: 0,
-        child: Center(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragStart: (_) {
-              setState(() => _isDraggingCropHandle = true);
-              HapticFeedback.selectionClick();
-            },
-            onVerticalDragUpdate: (details) {
-              final dy = details.primaryDelta ?? 0;
-              final deltaRatio = -(dy * 2.0) / screenHeight;
-              final newRatio = (_customHeightRatio + deltaRatio).clamp(0.15, 0.90);
-              if ((newRatio - _customHeightRatio).abs() > 0.001) {
-                setState(() => _customHeightRatio = newRatio);
-              }
-            },
-            onVerticalDragEnd: (_) {
+        height: handleHitHeight,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragStart: (details) {
+            _dragStartY = details.globalPosition.dy;
+            _dragStartRatio = _customHeightRatio;
+            setState(() => _isDraggingCropHandle = true);
+            HapticFeedback.selectionClick();
+          },
+          onVerticalDragUpdate: (details) {
+            final totalDy = details.globalPosition.dy - _dragStartY;
+            final deltaRatio = -(totalDy * 2.0) / screenHeight;
+            final newRatio = (_dragStartRatio + deltaRatio).clamp(0.15, 0.90);
+            if (newRatio != _customHeightRatio) {
+              setState(() => _customHeightRatio = newRatio);
+            }
+            // Mencegah deadband jika jari ditarik melebihi batas clamp
+            if (newRatio >= 0.90 && (_dragStartRatio + deltaRatio) > 0.90) {
+              _dragStartY = details.globalPosition.dy + ((0.90 - _dragStartRatio) * screenHeight / 2.0);
+            } else if (newRatio <= 0.15 && (_dragStartRatio + deltaRatio) < 0.15) {
+              _dragStartY = details.globalPosition.dy - ((_dragStartRatio - 0.15) * screenHeight / 2.0);
+            }
+          },
+          onVerticalDragEnd: (_) {
+            setState(() => _isDraggingCropHandle = false);
+            HapticFeedback.lightImpact();
+            _showStatus(
+              '📐 Tinggi: ${(_customHeightRatio * 100).round()}% (${viewfinderHeight.round()}px)',
+            );
+          },
+          onVerticalDragCancel: () {
+            if (_isDraggingCropHandle) {
               setState(() => _isDraggingCropHandle = false);
-              HapticFeedback.lightImpact();
-              _showStatus(
-                '📐 Tinggi Kustom: ${(_customHeightRatio * 100).round()}% (${previewHeight.round()}px)',
-              );
-            },
-            child: Container(
+            }
+          },
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.85),
+                color: _isDraggingCropHandle
+                    ? const Color(0xFFF59E0B)
+                    : Colors.black.withOpacity(0.85),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                border: Border.all(
+                  color: const Color(0xFFF59E0B),
+                  width: _isDraggingCropHandle ? 2.0 : 1.5,
+                ),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFF59E0B).withOpacity(0.35),
-                    blurRadius: 8,
+                    color: const Color(0xFFF59E0B).withOpacity(_isDraggingCropHandle ? 0.6 : 0.35),
+                    blurRadius: _isDraggingCropHandle ? 12 : 8,
                   ),
                 ],
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.unfold_more_rounded, color: Color(0xFFF59E0B), size: 15),
-                  SizedBox(width: 4),
+                  Icon(
+                    Icons.unfold_more_rounded,
+                    color: _isDraggingCropHandle ? Colors.black : const Color(0xFFF59E0B),
+                    size: 15,
+                  ),
+                  const SizedBox(width: 4),
                   Text(
                     'Geser Tinggi',
                     style: TextStyle(
-                      color: Color(0xFFF59E0B),
+                      color: _isDraggingCropHandle ? Colors.black : const Color(0xFFF59E0B),
                       fontSize: 10.5,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.3,
@@ -1835,53 +1885,77 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
 
       // Gagang Geser Bawah (Bottom Drag Handle)
       Positioned(
-        bottom: -16,
+        top: (viewfinderBottom - (handleHitHeight / 2)).clamp(0.0, screenHeight - handleHitHeight),
         left: 0,
         right: 0,
-        child: Center(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragStart: (_) {
-              setState(() => _isDraggingCropHandle = true);
-              HapticFeedback.selectionClick();
-            },
-            onVerticalDragUpdate: (details) {
-              final dy = details.primaryDelta ?? 0;
-              final deltaRatio = (dy * 2.0) / screenHeight;
-              final newRatio = (_customHeightRatio + deltaRatio).clamp(0.15, 0.90);
-              if ((newRatio - _customHeightRatio).abs() > 0.001) {
-                setState(() => _customHeightRatio = newRatio);
-              }
-            },
-            onVerticalDragEnd: (_) {
+        height: handleHitHeight,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onVerticalDragStart: (details) {
+            _dragStartY = details.globalPosition.dy;
+            _dragStartRatio = _customHeightRatio;
+            setState(() => _isDraggingCropHandle = true);
+            HapticFeedback.selectionClick();
+          },
+          onVerticalDragUpdate: (details) {
+            final totalDy = details.globalPosition.dy - _dragStartY;
+            final deltaRatio = (totalDy * 2.0) / screenHeight;
+            final newRatio = (_dragStartRatio + deltaRatio).clamp(0.15, 0.90);
+            if (newRatio != _customHeightRatio) {
+              setState(() => _customHeightRatio = newRatio);
+            }
+            // Mencegah deadband jika jari ditarik melebihi batas clamp
+            if (newRatio >= 0.90 && (_dragStartRatio + deltaRatio) > 0.90) {
+              _dragStartY = details.globalPosition.dy - ((0.90 - _dragStartRatio) * screenHeight / 2.0);
+            } else if (newRatio <= 0.15 && (_dragStartRatio + deltaRatio) < 0.15) {
+              _dragStartY = details.globalPosition.dy + ((_dragStartRatio - 0.15) * screenHeight / 2.0);
+            }
+          },
+          onVerticalDragEnd: (_) {
+            setState(() => _isDraggingCropHandle = false);
+            HapticFeedback.lightImpact();
+            _showStatus(
+              '📐 Tinggi: ${(_customHeightRatio * 100).round()}% (${viewfinderHeight.round()}px)',
+            );
+          },
+          onVerticalDragCancel: () {
+            if (_isDraggingCropHandle) {
               setState(() => _isDraggingCropHandle = false);
-              HapticFeedback.lightImpact();
-              _showStatus(
-                '📐 Tinggi Kustom: ${(_customHeightRatio * 100).round()}% (${previewHeight.round()}px)',
-              );
-            },
-            child: Container(
+            }
+          },
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.85),
+                color: _isDraggingCropHandle
+                    ? const Color(0xFFF59E0B)
+                    : Colors.black.withOpacity(0.85),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                border: Border.all(
+                  color: const Color(0xFFF59E0B),
+                  width: _isDraggingCropHandle ? 2.0 : 1.5,
+                ),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFF59E0B).withOpacity(0.35),
-                    blurRadius: 8,
+                    color: const Color(0xFFF59E0B).withOpacity(_isDraggingCropHandle ? 0.6 : 0.35),
+                    blurRadius: _isDraggingCropHandle ? 12 : 8,
                   ),
                 ],
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.unfold_more_rounded, color: Color(0xFFF59E0B), size: 15),
+                  Icon(
+                    Icons.unfold_more_rounded,
+                    color: _isDraggingCropHandle ? Colors.black : const Color(0xFFF59E0B),
+                    size: 15,
+                  ),
                   const SizedBox(width: 4),
                   Text(
                     '${(_customHeightRatio * 100).round()}%',
-                    style: const TextStyle(
-                      color: Color(0xFFF59E0B),
+                    style: TextStyle(
+                      color: _isDraggingCropHandle ? Colors.black : const Color(0xFFF59E0B),
                       fontSize: 10.5,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.3,
@@ -1896,34 +1970,38 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
 
       // Floating Badge saat sedang menggeser handle
       if (_isDraggingCropHandle)
-        Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.88),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.55),
-                  blurRadius: 10,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.88),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.55),
+                      blurRadius: 10,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.aspect_ratio_rounded, color: Color(0xFFF59E0B), size: 16),
-                const SizedBox(width: 6),
-                Text(
-                  'Tinggi: ${previewHeight.round()}px (${(_customHeightRatio * 100).round()}%)',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.aspect_ratio_rounded, color: Color(0xFFF59E0B), size: 16),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Tinggi: ${viewfinderHeight.round()}px (${(_customHeightRatio * 100).round()}%)',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),

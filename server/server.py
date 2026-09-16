@@ -58,9 +58,9 @@ except ImportError:
 
 # Import AIService (diimpor sebelum WinRT/MediaManager untuk mencegah konflik runtime DLL)
 try:
-    from ai_service import AIService
+    from ai_service import AIService, clean_latex_to_markdown
 except ImportError:
-    from server.ai_service import AIService
+    from server.ai_service import AIService, clean_latex_to_markdown
 
 ai_service = AIService()
 
@@ -404,6 +404,8 @@ def on_ai_query(data):
     prompt = data.get("prompt")
     mode = data.get("mode", "ocr")
 
+    start_time = time.time()
+
     print("\n" + "=" * 74)
     if mode == "vision":
         print("📸 [BYTEBRIDGE AI ASSISTANT] - Menerima gambar figural/visual langsung dari HP...")
@@ -411,11 +413,40 @@ def on_ai_query(data):
         print("📸 [BYTEBRIDGE AI ASSISTANT] - Menerima permintaan teks OCR dari HP...")
     print("=" * 74)
 
-    res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode)
+    # Animasi live ticker detik di terminal PC selama AI sedang berpikir/memproses
+    if _has_rich and _rich_console:
+        stop_ticker = threading.Event()
+        def _ticker_thread(status_obj, t0, is_figural):
+            mode_desc = "Vision Figural" if is_figural else "OCR Teks"
+            while not stop_ticker.wait(0.2):
+                sec = time.time() - t0
+                status_obj.update(
+                    f"[bold cyan]⏳ Gemini sedang memproses & berpikir ({mode_desc})... [bold yellow]{sec:.1f}s[/bold yellow][/bold cyan]"
+                )
+
+        mode_desc_init = "Vision Figural" if mode == "vision" else "OCR Teks"
+        status_init_msg = f"[bold cyan]⏳ Gemini sedang memproses & berpikir ({mode_desc_init})... [bold yellow]0.0s[/bold yellow][/bold cyan]"
+        with _rich_console.status(status_init_msg, spinner="dots") as status_obj:
+            t = threading.Thread(target=_ticker_thread, args=(status_obj, start_time, mode == "vision"), daemon=True)
+            t.start()
+            try:
+                res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode)
+            finally:
+                stop_ticker.set()
+                t.join(timeout=0.4)
+    else:
+        print("⏳ Gemini sedang memproses...")
+        res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode)
+
+    elapsed_time = time.time() - start_time
 
     if res.get("success"):
         detected_text = res.get("ocr_text", "").strip()
         llm_answer = res.get("llm_answer", "").strip()
+        try:
+            llm_answer = clean_latex_to_markdown(llm_answer)
+        except Exception:
+            pass
         model_name = res.get("model_used", "Gemini")
         is_vision = res.get("is_vision", False) or mode == "vision"
 
@@ -424,7 +455,7 @@ def on_ai_query(data):
         if _has_rich and _rich_console:
             try:
                 _rich_console.print()
-                # Badge model yang mencolok
+                # Badge model yang mencolok + Waktu proses respons
                 model_badge = RichText()
                 model_badge.append("🤖 Model: ", style="bold white")
                 model_badge.append(model_name, style="bold cyan")
@@ -433,6 +464,8 @@ def on_ai_query(data):
                     model_badge.append("Mode: Direct Vision (Figural)", style="bold magenta")
                 else:
                     model_badge.append(f"OCR: {len(detected_text)} karakter", style="bold yellow")
+                model_badge.append("  │  ", style="dim")
+                model_badge.append(f"⏱️ {elapsed_time:.2f}s", style="bold green")
                 _rich_console.print(Panel(model_badge, title="[bold green]⚡ BYTEBRIDGE AI[/bold green]", border_style="green"))
 
                 # Tampilkan info input jika relevan
@@ -441,10 +474,11 @@ def on_ai_query(data):
                 elif is_vision and prompt:
                     _rich_console.print(Panel(prompt, title="[bold magenta]💬 Instruksi Pengguna[/bold magenta]", border_style="magenta"))
 
-                # Panel jawaban AI — Markdown dirender cantik!
+                # Panel jawaban AI — Markdown dirender cantik + durasi waktu respons
                 title_panel = f"[bold magenta]🧩 Bedah Soal Figural AI ({model_name})[/bold magenta]" if is_vision else f"[bold cyan]🤖 Jawaban AI ({model_name})[/bold cyan]"
                 border_color = "magenta" if is_vision else "cyan"
-                _rich_console.print(Panel(RichMarkdown(llm_answer), title=title_panel, border_style=border_color, padding=(1, 2)))
+                subtitle_panel = f"[bold green]⏱️ Waktu Respons: {elapsed_time:.2f} detik[/bold green]"
+                _rich_console.print(Panel(RichMarkdown(llm_answer), title=title_panel, subtitle=subtitle_panel, border_style=border_color, padding=(1, 2)))
                 _rich_console.print()
                 printed_rich = True
             except Exception as e:
@@ -455,11 +489,12 @@ def on_ai_query(data):
             # Fallback jika rich tidak tersedia atau gagal render
             mode_lbl = "Direct Vision (Figural)" if is_vision else f"OCR ({len(detected_text)} karakter)"
             print("\n" + "=" * 74)
-            print(f"🤖 Model: {model_name} | Mode: {mode_lbl}")
+            print(f"🤖 Model: {model_name} | Mode: {mode_lbl} | ⏱️ Waktu: {elapsed_time:.2f}s")
             print("=" * 74)
             if not is_vision and detected_text:
                 print(f"\n📸 TEKS OCR:\n{detected_text}")
             print(f"\n🤖 JAWABAN AI:\n{llm_answer}")
+            print(f"\n⏱️ Selesai dalam: {elapsed_time:.2f} detik")
             print("\n" + "=" * 74 + "\n")
 
         # 2. Salin jawaban ke clipboard Windows secara hening
@@ -468,29 +503,31 @@ def on_ai_query(data):
         except Exception:
             pass
 
-        # 3. Kirim status sukses balik ke HP
+        # 3. Kirim status sukses balik ke HP (sertakan durasi waktu proses)
         emit("ai_response", {
             "success": True,
             "ocr_text": detected_text,
             "llm_answer": llm_answer,
             "model": model_name,
-            "mode": mode
+            "mode": mode,
+            "elapsed_time": round(elapsed_time, 2)
         })
     else:
         err_msg = res.get("error", "Terjadi kesalahan")
         printed_err_rich = False
         if _has_rich and _rich_console:
             try:
-                _rich_console.print(Panel(f"[bold red]❌ {err_msg}[/bold red]", title="[red]AI Error[/red]", border_style="red"))
+                _rich_console.print(Panel(f"[bold red]❌ {err_msg} (setelah {elapsed_time:.2f}s)[/bold red]", title="[red]AI Error[/red]", border_style="red"))
                 printed_err_rich = True
             except Exception:
                 printed_err_rich = False
         if not printed_err_rich:
-            print(f"\n[AI Error] ❌ {err_msg}\n" + "=" * 74 + "\n")
+            print(f"\n[AI Error] ❌ {err_msg} ({elapsed_time:.2f}s)\n" + "=" * 74 + "\n")
         emit("ai_response", {
             "success": False,
             "error": err_msg,
-            "mode": mode
+            "mode": mode,
+            "elapsed_time": round(elapsed_time, 2)
         })
 
 

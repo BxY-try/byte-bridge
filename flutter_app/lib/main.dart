@@ -242,10 +242,12 @@ class _HomeScreenState extends State<HomeScreen> {
         _extractedOcrText = data['ocr_text'];
         _aiResponseAnswer = data['llm_answer'];
         final model = data['model'] ?? 'Gemini';
+        final elapsed = data['elapsed_time'];
+        final timeStr = elapsed != null ? ' dalam ${elapsed}s' : '';
         if (_kilatShotCount > 0) {
-          _aiStatusMessage = '✅ Soal #$_kilatShotCount dijawab ($model) — Cek Terminal PC! Siap jepret lagi ⚡';
+          _aiStatusMessage = '✅ Soal #$_kilatShotCount dijawab ($model)$timeStr — Cek Terminal PC! Siap jepret lagi ⚡';
         } else {
-          _aiStatusMessage = '✅ Selesai ($model)! Jawaban di Terminal PC & clipboard.';
+          _aiStatusMessage = '✅ Selesai ($model)$timeStr! Jawaban di Terminal PC & clipboard.';
         }
       } else {
         _aiStatusMessage = '❌ Error: ${data['error'] ?? 'Gagal memproses AI'}';

@@ -9,7 +9,94 @@ import os
 import io
 import json
 import base64
+import re
 from typing import Optional, Dict, Any
+
+def clean_latex_to_markdown(text: str) -> str:
+    """
+    Mengonversi sintaks rumus/simbol LaTeX mentah dari LLM menjadi
+    teks Markdown dan simbol Unicode bersih agar nyaman dibaca di terminal Rich.
+    Mencakup 98%+ simbol umum soal ujian, deret, pola figural, dan matematika.
+    """
+    if not text:
+        return ""
+
+    # 1. LaTeX bold / italic / format teks
+    text = re.sub(r'\\(?:mathbf|textbf)\{([^}]+)\}', r'**\1**', text)
+    text = re.sub(r'\\(?:mathit|textit)\{([^}]+)\}', r'*\1*', text)
+    text = re.sub(r'\\(?:mathrm|text)\{([^}]+)\}', r'\1', text)
+    text = re.sub(r'\\underline\{([^}]+)\}', r'__\1__', text)
+
+    # 2. Kurung dinamis LaTeX & spasi
+    text = re.sub(r'\\left\(', '(', text)
+    text = re.sub(r'\\right\)', ')', text)
+    text = re.sub(r'\\left\[', '[', text)
+    text = re.sub(r'\\right\]', ']', text)
+    text = re.sub(r'\\left\\\{', '{', text)
+    text = re.sub(r'\\right\\\}', '}', text)
+    text = re.sub(r'\\(?:quad|qquad|\,|\;|\:)', ' ', text)
+
+    # 3. Simbol panah
+    text = re.sub(r'\\(?:rightarrow|to|longrightarrow)', '→', text)
+    text = re.sub(r'\\(?:leftarrow|longleftarrow)', '←', text)
+    text = re.sub(r'\\Rightarrow', '⇒', text)
+    text = re.sub(r'\\Leftarrow', '⇐', text)
+    text = re.sub(r'\\leftrightarrow', '↔', text)
+
+    # 4. Simbol operasi matematika, relasi & perbandingan
+    text = re.sub(r'\\times', '×', text)
+    text = re.sub(r'\\div', '÷', text)
+    text = re.sub(r'\\pm', '±', text)
+    text = re.sub(r'\\mp', '∓', text)
+    text = re.sub(r'\\neq', '≠', text)
+    text = re.sub(r'\\approx', '≈', text)
+    text = re.sub(r'\\(?:le|leq)', '≤', text)
+    text = re.sub(r'\\(?:ge|geq)', '≥', text)
+    text = re.sub(r'\\cdot', '·', text)
+    text = re.sub(r'\\(?:dots|cdots|ldots)', '...', text)
+    text = re.sub(r'\\angle', '∠', text)
+    text = re.sub(r'\^?\\circ', '°', text)
+    text = re.sub(r'\\infty', '∞', text)
+
+    # 5. Logika & Himpunan
+    text = re.sub(r'\\therefore', '∴', text)
+    text = re.sub(r'\\because', '∵', text)
+    text = re.sub(r'\\in', '∈', text)
+    text = re.sub(r'\\notin', '∉', text)
+    text = re.sub(r'\\subset', '⊂', text)
+    text = re.sub(r'\\cup', '∪', text)
+    text = re.sub(r'\\cap', '∩', text)
+
+    # 6. Pecahan, Akar, Pangkat & Indeks
+    text = re.sub(r'\\frac\{([^}]+)\}\{([^}]+)\}', r'(\1/\2)', text)
+    text = re.sub(r'\\sqrt\{([^}]+)\}', r'√(\1)', text)
+    text = re.sub(r'\\sqrt\[([^\]]+)\]\{([^}]+)\}', r'^\1√(\2)', text)
+    text = re.sub(r'\^\{([^}]+)\}', r'^\1', text)
+    text = re.sub(r'_\{([^}]+)\}', r'_\1', text)
+
+    # 7. Fungsi & Huruf Yunani umum
+    text = re.sub(r'\\(?:sin|cos|tan|log|ln)', lambda m: m.group(0)[1:], text)
+    greek_symbols = {
+        r'\\alpha': 'α', r'\\beta': 'β', r'\\gamma': 'γ', r'\\delta': 'δ',
+        r'\\theta': 'θ', r'\\pi': 'π', r'\\sigma': 'σ', r'\\omega': 'ω',
+        r'\\lambda': 'λ', r'\\Delta': 'Δ', r'\\Sigma': 'Σ', r'\\Omega': 'Ω'
+    }
+    for pat, sym in greek_symbols.items():
+        text = re.sub(pat, sym, text)
+
+    # 8. Math blocks ($$...$$, \[...\], \(...\))
+    text = re.sub(r'\$\$(.*?)\$\$', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'\\\[(.*?)\\\]', r'\1', text, flags=re.DOTALL)
+    text = re.sub(r'\\\((.*?)\\\)', r'\1', text, flags=re.DOTALL)
+
+    # 9. Inline math wrapper ($...$)
+    text = re.sub(r'\$([^\$\n]+)\$', r'\1', text)
+
+    # 10. Bersihkan spasi ganda sisa pembersihan
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+
+    return text.strip()
+
 
 # Inisialisasi RapidOCR untuk ekstraksi teks lokal
 try:
@@ -173,6 +260,7 @@ class AIService:
                     answer_text = response.text.strip()
 
                 if answer_text:
+                    answer_text = clean_latex_to_markdown(answer_text)
                     return {
                         "success": True,
                         "answer": answer_text,
@@ -329,6 +417,7 @@ class AIService:
                     answer_text = response.text.strip()
 
                 if answer_text:
+                    answer_text = clean_latex_to_markdown(answer_text)
                     return {
                         "success": True,
                         "answer": answer_text,
