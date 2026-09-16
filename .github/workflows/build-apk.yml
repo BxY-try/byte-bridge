@@ -43,7 +43,9 @@ jobs:
           python3 -c "
           p = 'android/app/src/main/AndroidManifest.xml'
           with open(p, 'r') as f: content = f.read()
-          perms = '''    <uses-permission android:name=\"android.permission.INTERNET\" />\n    <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />\n    <uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" />\n    <uses-permission android:name=\"android.permission.VIBRATE\" />\n    <uses-permission android:name=\"android.permission.CAMERA\" />\n    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"29\" />\n    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />\n'''
+          # Tambahkan namespace tools untuk mengatasi konflik manifest merger
+          content = content.replace('xmlns:android=\"http://schemas.android.com/apk/res/android\"', 'xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    xmlns:tools=\"http://schemas.android.com/tools\"')
+          perms = '''    <uses-permission android:name=\"android.permission.INTERNET\" />\n    <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />\n    <uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" />\n    <uses-permission android:name=\"android.permission.VIBRATE\" />\n    <uses-permission android:name=\"android.permission.CAMERA\" />\n    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"29\" tools:replace=\"android:maxSdkVersion\" />\n    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />\n'''
           content = content.replace('<application', perms + '    <application android:usesCleartextTraffic=\"true\" android:requestLegacyExternalStorage=\"true\"')
           with open(p, 'w') as f: f.write(content)
           print('Patched AndroidManifest.xml successfully')
