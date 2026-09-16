@@ -89,6 +89,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
 
   // Shutter & Capturing
   bool _isCapturing = false;
+  bool _isVisionCapturing = false;
   double _shutterFlashOpacity = 0.0;
   int _shotCount = 0;
   File? _lastCapturedFile;
@@ -119,8 +120,10 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     widget.socketService.onAiResponse = (data) {
       if (!mounted) return;
       final model = data['model'] ?? 'Gemini';
+      final isVision = data['mode'] == 'vision';
       if (data['success'] == true) {
-        _showStatus('✅ Soal #$_shotCount dijawab ($model) di PC!', isPersistent: false);
+        final label = isVision ? 'Soal Figural' : 'Soal';
+        _showStatus('✅ $label #$_shotCount dijawab ($model) di PC!', isPersistent: false);
       } else {
         _showStatus('❌ Server PC: ${data['error'] ?? 'Gagal memproses'}', isPersistent: false);
       }
@@ -663,6 +666,88 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     }
   }
 
+  // ========== SHUTTER KEDUA: LANGSUNG KIRIM GAMBAR KE AI (FIGURAL/VISION) ==========
+  Future<void> _captureVisionDirect() async {
+    if (_controller == null || !_isCameraReady || _isCapturing) return;
+
+    HapticFeedback.mediumImpact();
+
+    // Animasi kilat shutter snap
+    setState(() {
+      _isCapturing = true;
+      _isVisionCapturing = true;
+      _shutterFlashOpacity = 0.85;
+      _shotCount++;
+    });
+
+    Future.delayed(const Duration(milliseconds: 70), () {
+      if (mounted) setState(() => _shutterFlashOpacity = 0.0);
+    });
+
+    try {
+      final XFile photo = await _controller!.takePicture();
+      final capturedFile = File(photo.path);
+
+      final double targetRatio = _aspectRatioMode.ratio ??
+          (MediaQuery.of(context).size.width / MediaQuery.of(context).size.height);
+
+      setState(() {
+        _lastCapturedFile = capturedFile;
+      });
+
+      _showStatus('📸 Figural #$_shotCount — Mengirim gambar langsung ke AI...', isPersistent: true);
+
+      // Background processing: crop (jika ada ratio) lalu kirim base64 gambar langsung
+      _processVisionAndSend(capturedFile, _shotCount, targetRatio);
+    } catch (e) {
+      debugPrint('Take picture vision error: $e');
+      _showStatus('❌ Gagal jepret: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCapturing = false;
+          _isVisionCapturing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _processVisionAndSend(File photoFile, int shotIndex, double targetRatio) async {
+    File effectiveFile = photoFile;
+
+    // Jika pengguna memilih rasio selain Full, crop gambar agar sesuai bingkai yang dilihat pengguna
+    if (_aspectRatioMode != CameraAspectRatioMode.full) {
+      try {
+        effectiveFile = await _cropImageToRatio(photoFile, targetRatio);
+        if (mounted) {
+          setState(() {
+            _lastCapturedFile = effectiveFile;
+          });
+        }
+      } catch (e) {
+        debugPrint('Crop failed, fallback to original: $e');
+      }
+    }
+
+    try {
+      final bytes = await effectiveFile.readAsBytes();
+      final base64Img = base64Encode(bytes);
+      final prompt = (widget.prompt != null && widget.prompt!.trim().isNotEmpty)
+          ? widget.prompt!.trim()
+          : null;
+
+      _showStatus('🚀 Figural #$shotIndex — Gambar terkirim! Cek terminal PC...');
+      widget.socketService.sendAiQuery(
+        imageBase64: base64Img,
+        prompt: prompt,
+        mode: 'vision',
+      );
+    } catch (e) {
+      debugPrint('Gagal encode/kirim gambar vision: $e');
+      _showStatus('❌ Gagal kirim gambar: $e');
+    }
+  }
+
   void _finishAndExit() {
     widget.onFinished?.call(_shotCount, _lastCapturedFile, _lastOcrText);
     Navigator.of(context).pop();
@@ -1018,20 +1103,20 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                   _buildZoomControls(),
                   const SizedBox(height: 18),
 
-                  // Control Row: Thumbnail | Shutter | Selesai
+                  // Control Row: Thumbnail | Shutter Dual Bersebelahan | Selesai
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         // Thumbnail Terakhir (Pojok Kiri)
                         SizedBox(
-                          width: 58,
-                          height: 58,
+                          width: 52,
+                          height: 52,
                           child: _lastCapturedFile != null
                               ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(10),
                                   child: Stack(
                                     fit: StackFit.expand,
                                     children: [
@@ -1045,7 +1130,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                                             color: const Color(0xFFF59E0B),
                                             width: 1.5,
                                           ),
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(10),
                                         ),
                                       ),
                                     ],
@@ -1054,49 +1139,98 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                               : const SizedBox.shrink(),
                         ),
 
-                        // Shutter Button Besar (Tengah)
-                        GestureDetector(
-                          onTap: _isCapturing ? null : _captureInstant,
-                          child: Container(
-                            width: 78,
-                            height: 78,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Colors.white,
-                                width: 4.5,
-                              ),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(4.5),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 120),
+                        // Shutter Dual Bersebelahan: Shutter Utama (Besar) + Shutter Figural/Vision (Lebih Kecil)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // 1. Shutter Button Utama (OCR Kilat, 76x76)
+                            GestureDetector(
+                              onTap: _isCapturing ? null : _captureInstant,
+                              child: Container(
+                                width: 76,
+                                height: 76,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: _isCapturing
-                                      ? const Color(0xFFF59E0B)
-                                      : Colors.white,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 4.5,
+                                  ),
                                 ),
-                                child: _isCapturing
-                                    ? const Center(
-                                        child: SizedBox(
-                                          width: 24,
-                                          height: 24,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.8,
-                                            color: Colors.black87,
-                                          ),
-                                        ),
-                                      )
-                                    : null,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(4.5),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 120),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: (_isCapturing && !_isVisionCapturing)
+                                          ? const Color(0xFFF59E0B)
+                                          : Colors.white,
+                                    ),
+                                    child: (_isCapturing && !_isVisionCapturing)
+                                        ? const Center(
+                                            child: SizedBox(
+                                              width: 24,
+                                              height: 24,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.8,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+
+                            const SizedBox(width: 14),
+
+                            // 2. Shutter Button Kedua (AI Vision / Figural Langsung, 52x52 - Lebih Kecil)
+                            GestureDetector(
+                              onTap: _isCapturing ? null : _captureVisionDirect,
+                              child: Container(
+                                width: 52,
+                                height: 52,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 3.5,
+                                  ),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(3.5),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 120),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: (_isCapturing && _isVisionCapturing)
+                                          ? const Color(0xFFF59E0B)
+                                          : Colors.white,
+                                    ),
+                                    child: (_isCapturing && _isVisionCapturing)
+                                        ? const Center(
+                                            child: SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.2,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
 
                         // Tombol "Selesai" (Pojok Kanan)
                         SizedBox(
-                          width: 58,
+                          width: 52,
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [

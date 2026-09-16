@@ -238,13 +238,144 @@ class AIService:
             automatic_function_calling=afc_config
         )
 
-    def process(self, ocr_text: Optional[str] = None, image_data: Optional[str] = None, prompt: Optional[str] = None) -> Dict[str, Any]:
+    def query_gemini_multimodal(
+        self,
+        image_data: str | bytes,
+        custom_instruction: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Mengirimkan GAMBAR LANGSUNG ke Google Gemini (Multimodal Vision)
+        menggunakan SDK resmi google-genai (2025/2026 standard).
+        Sangat efektif untuk membedah soal FIGURAL, pola deret gambar, matriks visual,
+        geometri, atau diagram yang tidak dapat diproses oleh OCR teks biasa.
+        """
+        if not self._client:
+            api_key = self.config.get("gemini_api_key")
+            if not api_key:
+                return {
+                    "success": False,
+                    "error": "GEMINI_API_KEY belum diset. Silakan masukkan API Key di server/ai_config.json atau via aplikasi HP."
+                }
+            self._init_client()
+            if not self._client:
+                return {"success": False, "error": "Inisialisasi GenAI client gagal."}
+
+        if not _genai_available:
+            return {"success": False, "error": "Pustaka google-genai belum tersedia di server."}
+
+        # 1. Konversi gambar ke raw bytes dan tentukan mime-type
+        try:
+            if isinstance(image_data, str):
+                if "," in image_data:
+                    image_data = image_data.split(",", 1)[1]
+                raw_bytes = base64.b64decode(image_data)
+            else:
+                raw_bytes = image_data
+
+            mime_type = "image/jpeg"
+            if raw_bytes.startswith(b"\x89PNG"):
+                mime_type = "image/png"
+            elif raw_bytes.startswith(b"GIF8"):
+                mime_type = "image/gif"
+            elif raw_bytes.startswith(b"RIFF") and b"WEBP" in raw_bytes[:16]:
+                mime_type = "image/webp"
+
+            image_part = types.Part.from_bytes(data=raw_bytes, mime_type=mime_type)
+        except Exception as e:
+            return {"success": False, "error": f"Gagal membaca byte gambar: {e}"}
+
+        # 2. Susun prompt pembedahan figural & visual yang mendalam dan terstruktur
+        prompt = (
+            "Bedah dan selesaikan persoalan pada gambar ini secara teliti dan terstruktur untuk bahan belajar:\n\n"
+            "1. **Identifikasi Soal**: Tentukan jenis persoalan (deret figural, analogi gambar, matriks pola 9 kotak, bangun ruang/jaring kubus, atau diagram/geometri).\n"
+            "2. **Analisis Pola / Aturan Transformasi**: Uraikan aturan perubahan elemen secara spesifik (misal: rotasi sekian derajat searah/berlawanan jarum jam, penambahan/pengurangan garis/titik, pola cermin, perubahan warna/arsiran).\n"
+            "3. **Bedah Opsi Jawaban**: Analisis opsi jawaban yang tersedia (A, B, C, D, E) berdasarkan aturan di atas dan tunjukkan mengapa opsi lain gugur.\n"
+            "4. **Jawaban Akhir**: Tentukan kesimpulan jawaban akhir yang paling tepat secara tegas dan ringkas."
+        )
+
+        user_instruction = (custom_instruction or "").strip()
+        if not user_instruction:
+            user_instruction = (self.config.get("prompt_template") or "").strip()
+
+        if user_instruction:
+            prompt += f"\n\nInstruksi Khusus Pengguna:\n{user_instruction}"
+
+        # 3. Kirim ke model Gemini secara berurutan jika ada kuota habis / rate limit
+        last_err = ""
+        preferred_model = self.config.get("model", "gemini-3.6-flash")
+        candidate_models = [preferred_model] + [m for m in DEFAULT_MODELS if m != preferred_model]
+
+        for model_name in candidate_models:
+            try:
+                gen_config = self._get_thinking_config(model_name)
+                response = self._client.models.generate_content(
+                    model=model_name,
+                    contents=[image_part, prompt],
+                    config=gen_config
+                )
+
+                # Ambil teks jawaban bersih (hanya teks non-thought)
+                answer_text = ""
+                if response and hasattr(response, "candidates") and response.candidates:
+                    parts = getattr(response.candidates[0].content, "parts", [])
+                    answer_parts = [
+                        p.text for p in parts
+                        if getattr(p, "text", None) and not getattr(p, "thought", False)
+                    ]
+                    if answer_parts:
+                        answer_text = "".join(answer_parts).strip()
+
+                if not answer_text and response and getattr(response, "text", None):
+                    answer_text = response.text.strip()
+
+                if answer_text:
+                    return {
+                        "success": True,
+                        "answer": answer_text,
+                        "model": model_name
+                    }
+            except Exception as err:
+                last_err = str(err)
+                print(f"[AIService] Model {model_name} (Vision) mengalami kendala: {err}. Mencoba fallback berikutnya...")
+
+        return {
+            "success": False,
+            "error": f"Semua model Gemini Vision gagal merespons. Error terakhir: {last_err}"
+        }
+
+    def process(
+        self,
+        ocr_text: Optional[str] = None,
+        image_data: Optional[str] = None,
+        prompt: Optional[str] = None,
+        mode: Optional[str] = "ocr"
+    ) -> Dict[str, Any]:
         """
         Pipeline lengkap:
-        - Jika ocr_text sudah dikirim dari HP (misal dari Google ML Kit): langsung pakai!
-        - Jika HP mengirim gambar: jalankan RapidOCR lokal untuk ekstraksi teks (tetap 0 vision token).
-        - Kirim teks hasil OCR ke Gemini untuk dijawab.
+        - Jika mode == 'vision' dan ada gambar: langsung kirim ke Gemini Multimodal (Figural / Visual).
+        - Jika mode == 'ocr':
+            1. Jika ocr_text sudah dikirim dari HP (misal dari Google ML Kit): langsung pakai!
+            2. Jika HP mengirim gambar tanpa ocr_text: jalankan RapidOCR lokal untuk ekstraksi teks (tetap 0 vision token).
+            3. Kirim teks hasil OCR ke Gemini untuk dijawab.
         """
+        if mode == "vision" and image_data:
+            print("[AIService] 👁️ Mode Vision Langsung (Multimodal Figural) diaktifkan...")
+            llm_res = self.query_gemini_multimodal(image_data=image_data, custom_instruction=prompt)
+            if not llm_res.get("success"):
+                return {
+                    "success": False,
+                    "error": llm_res.get("error", "Gagal memproses gambar"),
+                    "ocr_text": "",
+                    "is_vision": True
+                }
+            return {
+                "success": True,
+                "ocr_text": "(Analisis Gambar Figural Langsung)",
+                "llm_answer": llm_res.get("answer", ""),
+                "model_used": llm_res.get("model", ""),
+                "is_vision": True
+            }
+
         final_ocr = (ocr_text or "").strip()
 
         # Jika teks OCR belum ada tapi ada gambar, ekstrak secara lokal
@@ -273,5 +404,6 @@ class AIService:
             "success": True,
             "ocr_text": final_ocr,
             "llm_answer": llm_res.get("answer", ""),
-            "model_used": llm_res.get("model", "")
+            "model_used": llm_res.get("model", ""),
+            "is_vision": False
         }

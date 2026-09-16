@@ -87,8 +87,8 @@ app = Flask(
 )
 app.config["SECRET_KEY"] = "bytebridge_secret_key"
 
-# Inisialisasi SocketIO (menggunakan eventlet secara otomatis)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Inisialisasi SocketIO (menggunakan eventlet secara otomatis) dengan buffer 15MB untuk transmisi gambar
+socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=15 * 1024 * 1024)
 
 # Inisialisasi MediaManager (GSMTC + pycaw)
 media_manager = MediaManager()
@@ -394,25 +394,30 @@ def on_text_input(data):
 @socketio.on("ai_query")
 def on_ai_query(data):
     """
-    Menangani permintaan analisis OCR & LLM dari HP.
-    Mencetak teks OCR dan jawaban AI secara BESAR dan JELAS di terminal server,
+    Menangani permintaan analisis OCR & LLM dari HP (Mode Teks OCR maupun Mode Vision Figural).
+    Mencetak hasil analisis dan bedah AI secara BESAR, RAPI, dan JELAS di terminal server,
     serta menyalin jawaban ke clipboard Windows secara hening (konsep Ctrl+C, tanpa injeksi Ctrl+V).
     """
     data = data or {}
     ocr_text = data.get("text") or data.get("ocr_text")
     image_data = data.get("image")
     prompt = data.get("prompt")
+    mode = data.get("mode", "ocr")
 
     print("\n" + "=" * 74)
-    print("📸 [BYTEBRIDGE AI ASSISTANT] - Menerima permintaan dari HP...")
+    if mode == "vision":
+        print("📸 [BYTEBRIDGE AI ASSISTANT] - Menerima gambar figural/visual langsung dari HP...")
+    else:
+        print("📸 [BYTEBRIDGE AI ASSISTANT] - Menerima permintaan teks OCR dari HP...")
     print("=" * 74)
 
-    res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt)
+    res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode)
 
     if res.get("success"):
         detected_text = res.get("ocr_text", "").strip()
         llm_answer = res.get("llm_answer", "").strip()
         model_name = res.get("model_used", "Gemini")
+        is_vision = res.get("is_vision", False) or mode == "vision"
 
         # 1. Cetak ke Terminal secara BESAR, RAPI, dan JELAS menggunakan Rich
         printed_rich = False
@@ -424,14 +429,22 @@ def on_ai_query(data):
                 model_badge.append("🤖 Model: ", style="bold white")
                 model_badge.append(model_name, style="bold cyan")
                 model_badge.append("  │  ", style="dim")
-                model_badge.append(f"OCR: {len(detected_text)} karakter", style="bold yellow")
+                if is_vision:
+                    model_badge.append("Mode: Direct Vision (Figural)", style="bold magenta")
+                else:
+                    model_badge.append(f"OCR: {len(detected_text)} karakter", style="bold yellow")
                 _rich_console.print(Panel(model_badge, title="[bold green]⚡ BYTEBRIDGE AI[/bold green]", border_style="green"))
 
-                # Panel teks OCR yang terbaca
-                _rich_console.print(Panel(detected_text or "(tidak ada teks)", title="[bold yellow]📸 Teks Terdeteksi (OCR)[/bold yellow]", border_style="yellow"))
+                # Tampilkan info input jika relevan
+                if not is_vision and detected_text:
+                    _rich_console.print(Panel(detected_text, title="[bold yellow]📸 Teks Terdeteksi (OCR)[/bold yellow]", border_style="yellow"))
+                elif is_vision and prompt:
+                    _rich_console.print(Panel(prompt, title="[bold magenta]💬 Instruksi Pengguna[/bold magenta]", border_style="magenta"))
 
                 # Panel jawaban AI — Markdown dirender cantik!
-                _rich_console.print(Panel(RichMarkdown(llm_answer), title=f"[bold cyan]🤖 Jawaban AI ({model_name})[/bold cyan]", border_style="cyan", padding=(1, 2)))
+                title_panel = f"[bold magenta]🧩 Bedah Soal Figural AI ({model_name})[/bold magenta]" if is_vision else f"[bold cyan]🤖 Jawaban AI ({model_name})[/bold cyan]"
+                border_color = "magenta" if is_vision else "cyan"
+                _rich_console.print(Panel(RichMarkdown(llm_answer), title=title_panel, border_style=border_color, padding=(1, 2)))
                 _rich_console.print()
                 printed_rich = True
             except Exception as e:
@@ -440,14 +453,16 @@ def on_ai_query(data):
 
         if not printed_rich:
             # Fallback jika rich tidak tersedia atau gagal render
+            mode_lbl = "Direct Vision (Figural)" if is_vision else f"OCR ({len(detected_text)} karakter)"
             print("\n" + "=" * 74)
-            print(f"🤖 Model: {model_name} | OCR: {len(detected_text)} karakter")
+            print(f"🤖 Model: {model_name} | Mode: {mode_lbl}")
             print("=" * 74)
-            print(f"\n📸 TEKS OCR:\n{detected_text}")
+            if not is_vision and detected_text:
+                print(f"\n📸 TEKS OCR:\n{detected_text}")
             print(f"\n🤖 JAWABAN AI:\n{llm_answer}")
             print("\n" + "=" * 74 + "\n")
 
-        # 2. Salin jawaban ke clipboard Windows
+        # 2. Salin jawaban ke clipboard Windows secara hening
         try:
             pyperclip.copy(llm_answer)
         except Exception:
@@ -458,7 +473,8 @@ def on_ai_query(data):
             "success": True,
             "ocr_text": detected_text,
             "llm_answer": llm_answer,
-            "model": model_name
+            "model": model_name,
+            "mode": mode
         })
     else:
         err_msg = res.get("error", "Terjadi kesalahan")
@@ -473,7 +489,8 @@ def on_ai_query(data):
             print(f"\n[AI Error] ❌ {err_msg}\n" + "=" * 74 + "\n")
         emit("ai_response", {
             "success": False,
-            "error": err_msg
+            "error": err_msg,
+            "mode": mode
         })
 
 
