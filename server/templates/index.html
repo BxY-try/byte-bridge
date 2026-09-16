@@ -913,30 +913,59 @@
     }
 
     .modal-card {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border);
+      background: var(--bg-card);
+      border: 1.5px solid var(--border);
       border-radius: 20px;
       padding: 20px;
       width: 100%;
-      max-width: 340px;
+      max-width: 440px;
+      max-height: 85vh;
+      overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 14px;
+      box-shadow: 0 16px 36px rgba(0,0,0,0.18);
     }
 
     .modal-card h3 {
       font-size: 1.1rem;
+      color: var(--text-dark);
     }
 
-    .modal-card input {
-      padding: 10px;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      color: white;
-      font-size: 1rem;
-      outline: none;
+    .modal-card label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: block;
+      margin-bottom: 4px;
     }
+
+    .modal-card input, .modal-card select {
+      padding: 10px 12px;
+      background: var(--bg-secondary);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      color: var(--text-dark);
+      font-size: 0.9rem;
+      outline: none;
+      width: 100%;
+    }
+
+    .modal-card input:focus, .modal-card select:focus {
+      border-color: #0284c7;
+    }
+
+    .modal-badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .badge-ok { background: #dcfce7; color: #15803d; }
+    .badge-none { background: #fee2e2; color: #b91c1c; }
 
     .modal-btns {
       display: flex;
@@ -1321,12 +1350,68 @@
   <!-- Settings Modal -->
   <div id="settingsModal" class="modal-overlay">
     <div class="modal-card">
-      <h3>Pengaturan Koneksi</h3>
-      <p style="font-size:0.8rem; color:var(--text-secondary);">Ganti alamat server jika tidak otomatis tersambung:</p>
-      <input type="text" id="customServerUrl" placeholder="http://192.168.1.10:8080">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>⚙️ Pengaturan Server & AI</h3>
+        <button onclick="closeSettings()" style="background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--text-secondary);">✕</button>
+      </div>
+
+      <!-- Section AI -->
+      <div style="background:var(--bg-secondary); padding:14px; border-radius:14px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="font-size:0.95rem; color:var(--text-dark);">🤖 Konfigurasi AI & LLM</strong>
+          <span id="aiModelActiveBadge" style="font-size:0.75rem; background:#dbeafe; color:#1d4ed8; padding:2px 8px; border-radius:6px; font-weight:600;">qwen3.8-flash</span>
+        </div>
+
+        <div>
+          <label for="aiModelSelect">Model Utama (Default):</label>
+          <select id="aiModelSelect" style="margin-top:2px;">
+            <option value="qwen3.8-flash">Qwen 3.8 Flash (Default per Sept 2026)</option>
+            <option value="qwen3.7-flash">Qwen 3.7 Flash (Fallback 2)</option>
+            <option value="gemini-3.5-flash">Gemini 3.5 Flash (Fallback 3)</option>
+            <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite (Fallback 4)</option>
+            <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+            <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+            <option value="gemini-flash-latest">Gemini Flash Latest</option>
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+          </select>
+        </div>
+
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <label for="dashscopeApiKey" style="margin-bottom:0;">DashScope / Qwen API Key:</label>
+            <span id="dashscopeKeyStatus" class="modal-badge-status badge-none">Belum diisi</span>
+          </div>
+          <input type="password" id="dashscopeApiKey" placeholder="Masukkan API Key DashScope (sk-...)" autocomplete="off">
+          <small style="font-size:0.72rem; color:var(--text-secondary); display:block; margin-top:3px;">Didapat dari Alibaba Cloud Model Studio.</small>
+        </div>
+
+        <div>
+          <label for="dashscopeBaseUrl">Endpoint URL DashScope:</label>
+          <input type="text" id="dashscopeBaseUrl" value="https://dashscope-intl.aliyuncs.com/compatible-mode/v1" style="font-size:0.8rem;">
+        </div>
+
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <label for="geminiApiKey" style="margin-bottom:0;">Google Gemini API Key (Fallback):</label>
+            <span id="geminiKeyStatus" class="modal-badge-status badge-ok">Terpasang</span>
+          </div>
+          <input type="password" id="geminiApiKey" placeholder="Masukkan Gemini API Key baru (opsional)" autocomplete="off">
+        </div>
+
+        <button class="btn-save" style="margin-top:6px; padding:10px; border-radius:10px; background:#0284c7; color:#fff; border:none; font-weight:bold; cursor:pointer; font-size:0.9rem;" onclick="saveAiSettings()">💾 Simpan Pengaturan AI</button>
+        <div id="aiSaveFeedback" style="font-size:0.78rem; text-align:center; display:none; padding:4px 8px; border-radius:6px; font-weight:600;"></div>
+      </div>
+
+      <!-- Section Server URL -->
+      <div style="background:var(--bg-secondary); padding:12px; border-radius:12px; border:1px solid var(--border); display:flex; flex-direction:column; gap:8px;">
+        <strong style="font-size:0.9rem; color:var(--text-dark);">🌐 Alamat Server PC (Manual)</strong>
+        <p style="font-size:0.75rem; color:var(--text-secondary);">Ganti alamat server jika browser tidak tersambung otomatis:</p>
+        <input type="text" id="customServerUrl" placeholder="http://192.168.1.x:8080">
+        <button class="btn-save" style="padding:8px; border-radius:8px; background:var(--text-dark); color:#fff; border:none; font-size:0.85rem; cursor:pointer;" onclick="saveCustomServer()">Hubungkan Ulang</button>
+      </div>
+
       <div class="modal-btns">
         <button class="btn-cancel" onclick="closeSettings()">Tutup</button>
-        <button class="btn-save" onclick="saveCustomServer()">Hubungkan</button>
       </div>
     </div>
   </div>
@@ -1836,14 +1921,106 @@
       }
     });
 
-    // Settings modal
+    // Settings modal & AI Configuration
     const settingsModal = document.getElementById('settingsModal');
     document.getElementById('btnSettings').addEventListener('click', () => {
       settingsModal.classList.add('open');
+      loadAiSettings();
     });
 
     function closeSettings() {
       settingsModal.classList.remove('open');
+    }
+
+    async function loadAiSettings() {
+      try {
+        const res = await fetch('/api/ai_config');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.success) return;
+
+        if (data.model) {
+          const sel = document.getElementById('aiModelSelect');
+          if (sel) sel.value = data.model;
+          const badge = document.getElementById('aiModelActiveBadge');
+          if (badge) badge.textContent = data.model;
+        }
+
+        if (data.dashscope_base_url) {
+          const urlInput = document.getElementById('dashscopeBaseUrl');
+          if (urlInput) urlInput.value = data.dashscope_base_url;
+        }
+
+        const dashStatus = document.getElementById('dashscopeKeyStatus');
+        if (dashStatus) {
+          if (data.has_dashscope_key) {
+            dashStatus.textContent = `Tersimpan (${data.masked_dashscope_key})`;
+            dashStatus.className = 'modal-badge-status badge-ok';
+          } else {
+            dashStatus.textContent = 'Belum diisi';
+            dashStatus.className = 'modal-badge-status badge-none';
+          }
+        }
+
+        const gemStatus = document.getElementById('geminiKeyStatus');
+        if (gemStatus) {
+          if (data.has_gemini_key) {
+            gemStatus.textContent = `Terpasang (${data.masked_gemini_key})`;
+            gemStatus.className = 'modal-badge-status badge-ok';
+          } else {
+            gemStatus.textContent = 'Belum diisi';
+            gemStatus.className = 'modal-badge-status badge-none';
+          }
+        }
+      } catch (e) {
+        console.error('Gagal memuat AI config:', e);
+      }
+    }
+
+    async function saveAiSettings() {
+      const model = document.getElementById('aiModelSelect').value;
+      const dashKey = document.getElementById('dashscopeApiKey').value.trim();
+      const dashBaseUrl = document.getElementById('dashscopeBaseUrl').value.trim();
+      const gemKey = document.getElementById('geminiApiKey').value.trim();
+
+      const payload = { model };
+      if (dashKey) payload.dashscope_api_key = dashKey;
+      if (dashBaseUrl) payload.dashscope_base_url = dashBaseUrl;
+      if (gemKey) payload.gemini_api_key = gemKey;
+
+      const fb = document.getElementById('aiSaveFeedback');
+      try {
+        const res = await fetch('/api/ai_config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const result = await res.json();
+        if (fb) {
+          fb.style.display = 'block';
+          if (result.success) {
+            fb.style.background = '#dcfce7';
+            fb.style.color = '#15803d';
+            fb.textContent = '✅ ' + result.message;
+            document.getElementById('dashscopeApiKey').value = '';
+            document.getElementById('geminiApiKey').value = '';
+            loadAiSettings();
+          } else {
+            fb.style.background = '#fee2e2';
+            fb.style.color = '#b91c1c';
+            fb.textContent = '❌ ' + (result.message || 'Gagal menyimpan');
+          }
+          setTimeout(() => { fb.style.display = 'none'; }, 3500);
+        }
+      } catch (err) {
+        if (fb) {
+          fb.style.display = 'block';
+          fb.style.background = '#fee2e2';
+          fb.style.color = '#b91c1c';
+          fb.textContent = '❌ Terjadi kesalahan: ' + err.message;
+          setTimeout(() => { fb.style.display = 'none'; }, 3500);
+        }
+      }
     }
 
     function saveCustomServer() {

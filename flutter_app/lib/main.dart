@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:camera/camera.dart';
+import 'package:gal/gal.dart';
 import 'discovery_service.dart';
 import 'socket_service.dart';
 import 'kilat_camera_screen.dart';
@@ -277,6 +278,11 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (photo == null) return;
 
+      // Simpan salinan ke Galeri HP jika baru dijepret dari kamera
+      if (!fromGallery) {
+        _savePhotoToGallery(photo.path);
+      }
+
       setState(() {
         _capturedImage = File(photo.path);
         _isAiLoading = true;
@@ -323,6 +329,28 @@ class _HomeScreenState extends State<HomeScreen> {
         _aiStatusMessage = '❌ Gagal: $e';
       });
     }
+  }
+
+  /// Menyimpan foto kamera tunggal ke Galeri HP (Album "ByteBridge") di latar belakang
+  void _savePhotoToGallery(String imagePath) {
+    Future(() async {
+      try {
+        final hasAccess = await Gal.hasAccess(toAlbum: true);
+        if (!hasAccess) {
+          final granted = await Gal.requestAccess(toAlbum: true);
+          if (!granted) {
+            debugPrint('[Gal] Akses galeri tidak diizinkan oleh pengguna');
+            return;
+          }
+        }
+        await Gal.putImage(imagePath, album: 'ByteBridge');
+        debugPrint('[Gal] Foto kamera tunggal berhasil disimpan ke Galeri HP (Album ByteBridge)');
+      } on GalException catch (e) {
+        debugPrint('[Gal] GalException: ${e.type.message}');
+      } catch (e) {
+        debugPrint('[Gal] Error saat menyimpan foto ke galeri: $e');
+      }
+    });
   }
 
   // ========== MODE KILAT METHODS ==========

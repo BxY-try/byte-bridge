@@ -19,3 +19,4 @@ google-genai
 rapidocr-onnxruntime
 pillow
 rich
+openai

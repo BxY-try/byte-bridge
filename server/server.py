@@ -36,7 +36,7 @@ if sys.platform.startswith("win"):
 
 import atexit
 import queue
-from flask import Flask, jsonify, render_template, send_from_directory
+from flask import Flask, jsonify, render_template, send_from_directory, request
 from flask_socketio import SocketIO, emit
 import pyautogui
 import pyperclip
@@ -243,6 +243,53 @@ def status():
     })
 
 
+@app.route("/api/ai_config", methods=["GET"])
+def get_ai_config():
+    """Mengambil konfigurasi AI aktif (dengan masking pada API key)."""
+    cfg = ai_service.config
+    dash_key = (cfg.get("dashscope_api_key") or cfg.get("qwen_api_key") or "").strip()
+    gem_key = (cfg.get("gemini_api_key") or "").strip()
+
+    def mask_key(k: str) -> str:
+        if not k:
+            return ""
+        if len(k) <= 8:
+            return "****"
+        return k[:4] + "...." + k[-4:]
+
+    return jsonify({
+        "success": True,
+        "model": cfg.get("model", "qwen3.8-flash"),
+        "dashscope_base_url": cfg.get("dashscope_base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+        "has_dashscope_key": bool(dash_key),
+        "masked_dashscope_key": mask_key(dash_key),
+        "has_gemini_key": bool(gem_key),
+        "masked_gemini_key": mask_key(gem_key),
+        "prompt_template": cfg.get("prompt_template", ""),
+        "available_models": [
+            "qwen3.8-flash",
+            "qwen3.7-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+            "gemini-flash-latest",
+            "gemini-2.5-flash"
+        ]
+    })
+
+
+@app.route("/api/ai_config", methods=["POST"])
+def update_ai_config():
+    """Menyimpan konfigurasi AI baru via HTTP POST."""
+    data = request.get_json(silent=True) or {}
+    success = ai_service.save_config(data)
+    return jsonify({
+        "success": success,
+        "message": "Konfigurasi AI berhasil disimpan" if success else "Gagal menyimpan konfigurasi AI"
+    })
+
+
 # ---------- Socket.IO Events ----------
 
 connected_clients = 0
@@ -414,6 +461,7 @@ def on_ai_query(data):
     print("=" * 74)
 
     # Animasi live ticker detik di terminal PC selama AI sedang berpikir/memproses
+    model_display = ai_service.config.get("model", "AI")
     if _has_rich and _rich_console:
         stop_ticker = threading.Event()
         def _ticker_thread(status_obj, t0, is_figural):
@@ -421,11 +469,11 @@ def on_ai_query(data):
             while not stop_ticker.wait(0.2):
                 sec = time.time() - t0
                 status_obj.update(
-                    f"[bold cyan]⏳ Gemini sedang memproses & berpikir ({mode_desc})... [bold yellow]{sec:.1f}s[/bold yellow][/bold cyan]"
+                    f"[bold cyan]⏳ AI ({model_display}) sedang memproses & berpikir ({mode_desc})... [bold yellow]{sec:.1f}s[/bold yellow][/bold cyan]"
                 )
 
         mode_desc_init = "Vision Figural" if mode == "vision" else "OCR Teks"
-        status_init_msg = f"[bold cyan]⏳ Gemini sedang memproses & berpikir ({mode_desc_init})... [bold yellow]0.0s[/bold yellow][/bold cyan]"
+        status_init_msg = f"[bold cyan]⏳ AI ({model_display}) sedang memproses & berpikir ({mode_desc_init})... [bold yellow]0.0s[/bold yellow][/bold cyan]"
         with _rich_console.status(status_init_msg, spinner="dots") as status_obj:
             t = threading.Thread(target=_ticker_thread, args=(status_obj, start_time, mode == "vision"), daemon=True)
             t.start()
@@ -435,7 +483,7 @@ def on_ai_query(data):
                 stop_ticker.set()
                 t.join(timeout=0.4)
     else:
-        print("⏳ Gemini sedang memproses...")
+        print(f"⏳ AI ({model_display}) sedang memproses...")
         res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode)
 
     elapsed_time = time.time() - start_time
@@ -529,6 +577,42 @@ def on_ai_query(data):
             "mode": mode,
             "elapsed_time": round(elapsed_time, 2)
         })
+
+
+@socketio.on("get_ai_config")
+def on_get_ai_config():
+    """Kirim konfigurasi AI ke client."""
+    cfg = ai_service.config
+    dash_key = (cfg.get("dashscope_api_key") or cfg.get("qwen_api_key") or "").strip()
+    gem_key = (cfg.get("gemini_api_key") or "").strip()
+
+    def mask_key(k: str) -> str:
+        if not k:
+            return ""
+        if len(k) <= 8:
+            return "****"
+        return k[:4] + "...." + k[-4:]
+
+    emit("get_ai_config_response", {
+        "success": True,
+        "model": cfg.get("model", "qwen3.8-flash"),
+        "dashscope_base_url": cfg.get("dashscope_base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+        "has_dashscope_key": bool(dash_key),
+        "masked_dashscope_key": mask_key(dash_key),
+        "has_gemini_key": bool(gem_key),
+        "masked_gemini_key": mask_key(gem_key),
+        "prompt_template": cfg.get("prompt_template", ""),
+        "available_models": [
+            "qwen3.8-flash",
+            "qwen3.7-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+            "gemini-flash-latest",
+            "gemini-2.5-flash"
+        ]
+    })
 
 
 @socketio.on("save_ai_config")

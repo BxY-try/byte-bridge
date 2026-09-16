@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:gal/gal.dart';
 import 'socket_service.dart';
 
 /// Pilihan rasio kamera (Aspect Ratio)
@@ -585,6 +586,30 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     }
   }
 
+  // ========== SIMPAN FOTO KE GALERI HP (ALBUM BYTEBRIDGE) ==========
+  /// Menyimpan foto ke Galeri HP (Album "ByteBridge") di latar belakang
+  /// Berjalan secara non-blocking sehingga shutter beruntun tetap instan tanpa lag
+  void _savePhotoToGallery(File photoFile) {
+    Future(() async {
+      try {
+        final hasAccess = await Gal.hasAccess(toAlbum: true);
+        if (!hasAccess) {
+          final granted = await Gal.requestAccess(toAlbum: true);
+          if (!granted) {
+            debugPrint('[Gal] Akses galeri tidak diizinkan oleh pengguna');
+            return;
+          }
+        }
+        await Gal.putImage(photoFile.path, album: 'ByteBridge');
+        debugPrint('[Gal] Foto berhasil disimpan ke Galeri HP (Album ByteBridge): ${photoFile.path}');
+      } on GalException catch (e) {
+        debugPrint('[Gal] GalException saat menyimpan foto: ${e.type.message}');
+      } catch (e) {
+        debugPrint('[Gal] Error saat menyimpan foto ke galeri: $e');
+      }
+    });
+  }
+
   // ========== SHUTTER KILAT: JEPRET BERUNTUN TANPA KONFIRMASI ==========
   Future<void> _captureInstant() async {
     if (_controller == null || !_isCameraReady || _isCapturing) return;
@@ -644,6 +669,9 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
         debugPrint('Crop failed, fallback to original: $e');
       }
     }
+
+    // Simpan foto ke Galeri HP (Album ByteBridge) secara asinkron di latar belakang
+    _savePhotoToGallery(effectiveFile);
 
     String ocrResult = '';
     try {
@@ -744,6 +772,9 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
         debugPrint('Crop failed, fallback to original: $e');
       }
     }
+
+    // Simpan foto ke Galeri HP (Album ByteBridge) secara asinkron di latar belakang
+    _savePhotoToGallery(effectiveFile);
 
     try {
       final bytes = await effectiveFile.readAsBytes();
@@ -1166,30 +1197,36 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        // Thumbnail Terakhir (Pojok Kiri)
+                        // Thumbnail Terakhir (Pojok Kiri - Tap untuk buka Galeri HP)
                         SizedBox(
                           width: 52,
                           height: 52,
                           child: _lastCapturedFile != null
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: Stack(
-                                    fit: StackFit.expand,
-                                    children: [
-                                      Image.file(
-                                        _lastCapturedFile!,
-                                        fit: BoxFit.cover,
-                                      ),
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          border: Border.all(
-                                            color: const Color(0xFFF59E0B),
-                                            width: 1.5,
-                                          ),
-                                          borderRadius: BorderRadius.circular(10),
+                              ? GestureDetector(
+                                  onTap: () {
+                                    HapticFeedback.selectionClick();
+                                    Gal.open();
+                                  },
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        Image.file(
+                                          _lastCapturedFile!,
+                                          fit: BoxFit.cover,
                                         ),
-                                      ),
-                                    ],
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            border: Border.all(
+                                              color: const Color(0xFFF59E0B),
+                                              width: 1.5,
+                                            ),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 )
                               : const SizedBox.shrink(),
