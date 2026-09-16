@@ -13,6 +13,7 @@ enum CameraAspectRatioMode {
   ratio4x3('4:3', 3.0 / 4.0, 'Standar 4:3 (Dokumen/Buku)'),
   ratio16x9('16:9', 9.0 / 16.0, 'Layar Lebar 16:9 (Cinematic)'),
   ratio1x1('1:1', 1.0, 'Persegi 1:1 (Fokus 1 Soal)'),
+  custom('Custom', null, 'Rasio Kustom (Bebas Atur Tinggi Vertikal)'),
   full('Full', null, 'Layar Penuh (Full Screen)');
 
   final String label;
@@ -57,6 +58,17 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   // Rasio Kamera (Aspect Ratio)
   late CameraAspectRatioMode _aspectRatioMode;
   bool _showRatioSelector = false;
+  double _customHeightRatio = 0.45; // Rentang 0.15 hingga 0.90 dari tinggi layar
+  bool _isDraggingCropHandle = false;
+
+  /// Helper penentu rasio target (Single Source of Truth untuk Viewfinder & Seluruh Shutter)
+  double _getTargetRatio(double screenWidth, double screenHeight) {
+    if (_aspectRatioMode == CameraAspectRatioMode.custom) {
+      final effectiveHeight = (_customHeightRatio * screenHeight).clamp(60.0, screenHeight);
+      return screenWidth / effectiveHeight;
+    }
+    return _aspectRatioMode.ratio ?? (screenWidth / screenHeight);
+  }
 
   // Zoom
   double _currentZoom = 1.0;
@@ -510,15 +522,15 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
           return originalFile;
         }
         if (currentRatio > targetRatio) {
-          cropW = imgH * targetRatio;
+          cropW = (imgH * targetRatio).clamp(1.0, imgW);
           cropH = imgH;
-          cropX = (imgW - cropW) / 2.0;
+          cropX = ((imgW - cropW) / 2.0).clamp(0.0, imgW - cropW);
           cropY = 0.0;
         } else {
           cropW = imgW;
-          cropH = imgW / targetRatio;
+          cropH = (imgW / targetRatio).clamp(1.0, imgH);
           cropX = 0.0;
-          cropY = (imgH - cropH) / 2.0;
+          cropY = ((imgH - cropH) / 2.0).clamp(0.0, imgH - cropH);
         }
       } else {
         // Buffer lanskap dari sensor hardware (lebar >= tinggi)
@@ -530,14 +542,14 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
           return originalFile;
         }
         if (currentPortraitRatio > targetRatio) {
-          cropH = imgW * targetRatio;
+          cropH = (imgW * targetRatio).clamp(1.0, imgH);
           cropW = imgW;
           cropX = 0.0;
-          cropY = (imgH - cropH) / 2.0;
+          cropY = ((imgH - cropH) / 2.0).clamp(0.0, imgH - cropH);
         } else {
           cropH = imgH;
-          cropW = imgH / targetRatio;
-          cropX = (imgW - cropW) / 2.0;
+          cropW = (imgH / targetRatio).clamp(1.0, imgW);
+          cropX = ((imgW - cropW) / 2.0).clamp(0.0, imgW - cropW);
           cropY = 0.0;
         }
       }
@@ -590,9 +602,9 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
       final XFile photo = await _controller!.takePicture();
       final capturedFile = File(photo.path);
 
-      // Hitung rasio target saat pemotretan berlangsung
-      final double targetRatio = _aspectRatioMode.ratio ??
-          (MediaQuery.of(context).size.width / MediaQuery.of(context).size.height);
+      // Hitung rasio target saat pemotretan berlangsung (Single Source of Truth)
+      final size = MediaQuery.of(context).size;
+      final double targetRatio = _getTargetRatio(size.width, size.height);
 
       setState(() {
         _lastCapturedFile = capturedFile;
@@ -688,8 +700,8 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
       final XFile photo = await _controller!.takePicture();
       final capturedFile = File(photo.path);
 
-      final double targetRatio = _aspectRatioMode.ratio ??
-          (MediaQuery.of(context).size.width / MediaQuery.of(context).size.height);
+      final size = MediaQuery.of(context).size;
+      final double targetRatio = _getTargetRatio(size.width, size.height);
 
       setState(() {
         _lastCapturedFile = capturedFile;
@@ -832,8 +844,8 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
         final rawRatio = _controller!.value.aspectRatio;
         final sensorPortraitRatio = rawRatio > 1.0 ? (1.0 / rawRatio) : rawRatio;
 
-        // Tentukan rasio target sesuai pilihan pengguna
-        final double targetRatio = _aspectRatioMode.ratio ?? screenRatio;
+        // Tentukan rasio target sesuai pilihan pengguna (Single Source of Truth)
+        final double targetRatio = _getTargetRatio(screenWidth, screenHeight);
 
         return Stack(
           fit: StackFit.expand,
@@ -850,103 +862,113 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                     final previewWidth = previewConstraints.maxWidth;
                     final previewHeight = previewConstraints.maxHeight;
 
-                    return ClipRect(
-                      child: Listener(
-                        behavior: HitTestBehavior.opaque,
-                        onPointerDown: (event) {
-                          _pointers++;
-                          if (_pointers == 1) {
-                            _pointerDownPos = event.localPosition;
-                            _pointerDownTime = DateTime.now();
-                            _hasMoved = false;
-                            _isLongPressTriggered = false;
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      fit: StackFit.expand,
+                      children: [
+                        ClipRect(
+                          child: Listener(
+                            behavior: HitTestBehavior.opaque,
+                            onPointerDown: (event) {
+                              _pointers++;
+                              if (_pointers == 1) {
+                                _pointerDownPos = event.localPosition;
+                                _pointerDownTime = DateTime.now();
+                                _hasMoved = false;
+                                _isLongPressTriggered = false;
 
-                            _longPressTimer?.cancel();
-                            _longPressTimer = Timer(const Duration(milliseconds: 500), () {
-                              if (_pointers == 1 && !_hasMoved && mounted && _pointerDownPos != null) {
-                                _isLongPressTriggered = true;
-                                _triggerAfAeLock(_pointerDownPos!, previewWidth, previewHeight);
+                                _longPressTimer?.cancel();
+                                _longPressTimer = Timer(const Duration(milliseconds: 500), () {
+                                  if (_pointers == 1 && !_hasMoved && mounted && _pointerDownPos != null) {
+                                    _isLongPressTriggered = true;
+                                    _triggerAfAeLock(_pointerDownPos!, previewWidth, previewHeight);
+                                  }
+                                });
+                              } else if (_pointers >= 2) {
+                                // Gesture 2 jari (pinch): Batalkan long press & sembunyikan kotak fokus sementara jika tidak terkunci
+                                _longPressTimer?.cancel();
+                                _hasMoved = true;
+                                if (!_isFocusLocked) {
+                                  setState(() => _focusPoint = null);
+                                }
+                                _baseZoom = _zoomNotifier.value;
                               }
-                            });
-                          } else if (_pointers >= 2) {
-                            // Gesture 2 jari (pinch): Batalkan long press & sembunyikan kotak fokus sementara jika tidak terkunci
-                            _longPressTimer?.cancel();
-                            _hasMoved = true;
-                            if (!_isFocusLocked) {
-                              setState(() => _focusPoint = null);
-                            }
-                            _baseZoom = _zoomNotifier.value;
-                          }
-                        },
-                        onPointerMove: (event) {
-                          if (_pointers == 1 && _pointerDownPos != null) {
-                            if ((event.localPosition - _pointerDownPos!).distance > 12.0) {
-                              _hasMoved = true;
+                            },
+                            onPointerMove: (event) {
+                              if (_pointers == 1 && _pointerDownPos != null) {
+                                if ((event.localPosition - _pointerDownPos!).distance > 12.0) {
+                                  _hasMoved = true;
+                                  _longPressTimer?.cancel();
+                                }
+                              }
+                            },
+                            onPointerUp: (event) {
                               _longPressTimer?.cancel();
-                            }
-                          }
-                        },
-                        onPointerUp: (event) {
-                          _longPressTimer?.cancel();
-                          if (_pointers == 1 && !_hasMoved && !_isLongPressTriggered && _pointerDownTime != null) {
-                            final duration = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
-                            if (duration < 400) {
-                              _handleTapToFocus(event.localPosition, previewWidth, previewHeight);
-                            }
-                          }
-                          _pointers = (_pointers - 1).clamp(0, 10);
-                          if (_pointers == 0) {
-                            _pointerDownPos = null;
-                            _pointerDownTime = null;
-                            _isLongPressTriggered = false;
-                          }
-                        },
-                        onPointerCancel: (event) {
-                          _pointers = 0;
-                          _longPressTimer?.cancel();
-                          _pointerDownPos = null;
-                          _pointerDownTime = null;
-                          _isLongPressTriggered = false;
-                        },
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onScaleStart: (details) {
-                            _baseZoom = _zoomNotifier.value;
-                          },
-                          onScaleUpdate: (details) {
-                            if (details.pointerCount >= 2) {
-                              _onPinchZoomUpdate(details.scale);
-                            }
-                          },
-                          onScaleEnd: (details) {
-                            _onPinchZoomEnd();
-                          },
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              // Feed kamera diskalakan proporsional tanpa distorsi (FittedBox cover)
-                              FittedBox(
-                                fit: BoxFit.cover,
-                                child: SizedBox(
-                                  width: previewWidth,
-                                  height: previewWidth / sensorPortraitRatio,
-                                  child: CameraPreview(_controller!),
-                                ),
-                              ),
+                              if (_pointers == 1 && !_hasMoved && !_isLongPressTriggered && _pointerDownTime != null) {
+                                final duration = DateTime.now().difference(_pointerDownTime!).inMilliseconds;
+                                if (duration < 400) {
+                                  _handleTapToFocus(event.localPosition, previewWidth, previewHeight);
+                                }
+                              }
+                              _pointers = (_pointers - 1).clamp(0, 10);
+                              if (_pointers == 0) {
+                                _pointerDownPos = null;
+                                _pointerDownTime = null;
+                                _isLongPressTriggered = false;
+                              }
+                            },
+                            onPointerCancel: (event) {
+                              _pointers = 0;
+                              _longPressTimer?.cancel();
+                              _pointerDownPos = null;
+                              _pointerDownTime = null;
+                              _isLongPressTriggered = false;
+                            },
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onScaleStart: (details) {
+                                _baseZoom = _zoomNotifier.value;
+                              },
+                              onScaleUpdate: (details) {
+                                if (details.pointerCount >= 2) {
+                                  _onPinchZoomUpdate(details.scale);
+                                }
+                              },
+                              onScaleEnd: (details) {
+                                _onPinchZoomEnd();
+                              },
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  // Feed kamera diskalakan proporsional tanpa distorsi (FittedBox cover)
+                                  FittedBox(
+                                    fit: BoxFit.cover,
+                                    child: SizedBox(
+                                      width: previewWidth,
+                                      height: previewWidth / sensorPortraitRatio,
+                                      child: CameraPreview(_controller!),
+                                    ),
+                                  ),
 
-                              // Kotak Reticle Indikator Fokus (Tap / AF/AE Lock)
-                              _buildFocusIndicator(previewWidth, previewHeight),
+                                  // Kotak Reticle Indikator Fokus (Tap / AF/AE Lock)
+                                  _buildFocusIndicator(previewWidth, previewHeight),
 
-                              // Efek Flash Shutter Snap (Layar kilat 70ms saat shutter ditekan)
-                              AnimatedOpacity(
-                                opacity: _shutterFlashOpacity,
-                                duration: const Duration(milliseconds: 70),
-                                child: Container(color: Colors.white),
+                                  // Efek Flash Shutter Snap (Layar kilat 70ms saat shutter ditekan)
+                                  AnimatedOpacity(
+                                    opacity: _shutterFlashOpacity,
+                                    duration: const Duration(milliseconds: 70),
+                                    child: Container(color: Colors.white),
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
+
+                        // Overlay Bingkai & Gagang Geser Tinggi (Khusus Mode Custom)
+                        if (_aspectRatioMode == CameraAspectRatioMode.custom)
+                          ..._buildCustomCropOverlay(previewWidth, previewHeight, screenHeight),
+                      ],
                     );
                   },
                 ),
@@ -1041,13 +1063,15 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
                 left: 16,
                 right: 16,
                 child: Center(
-                  child: _buildRatioSelectorBar(),
+                  child: _buildRatioSelectorBar(screenHeight),
                 ),
               ),
 
             // 3. FLOATING STATUS BANNER (HUD)
             Positioned(
-              top: _showRatioSelector ? 116 : 72,
+              top: _showRatioSelector
+                  ? (_aspectRatioMode == CameraAspectRatioMode.custom ? 194 : 116)
+                  : 72,
               left: 20,
               right: 20,
               child: AnimatedOpacity(
@@ -1524,7 +1548,10 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     HapticFeedback.selectionClick();
     setState(() {
       _aspectRatioMode = mode;
-      _showRatioSelector = false;
+      // Jangan langsung tutup jika memilih Custom, agar pengguna bisa lihat slider & preset
+      if (mode != CameraAspectRatioMode.custom) {
+        _showRatioSelector = false;
+      }
       _focusPoint = null;
       _isFocusLocked = false;
     });
@@ -1539,6 +1566,11 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   }
 
   Widget _buildRatioButton() {
+    String label = _aspectRatioMode.label;
+    if (_aspectRatioMode == CameraAspectRatioMode.custom) {
+      label = 'Custom ${(_customHeightRatio * 100).round()}%';
+    }
+
     return GestureDetector(
       onTap: _toggleRatioSelector,
       child: AnimatedContainer(
@@ -1564,7 +1596,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
             ),
             const SizedBox(width: 4),
             Text(
-              _aspectRatioMode.label,
+              label,
               style: TextStyle(
                 color: _showRatioSelector ? Colors.black : Colors.white,
                 fontWeight: FontWeight.bold,
@@ -1577,47 +1609,324 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
     );
   }
 
-  Widget _buildRatioSelectorBar() {
+  Widget _buildRatioSelectorBar(double screenHeight) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.88),
-        borderRadius: BorderRadius.circular(24),
+        color: Colors.black.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: const Color(0xFFF59E0B), width: 1.2),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.6),
-            blurRadius: 10,
+            blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
       ),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
-        children: CameraAspectRatioMode.values.map((mode) {
-          final isSelected = mode == _aspectRatioMode;
-          return GestureDetector(
-            onTap: () => _setAspectRatio(mode),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 160),
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-              decoration: BoxDecoration(
-                color: isSelected ? const Color(0xFFF59E0B) : Colors.white.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                mode.label,
-                style: TextStyle(
-                  color: isSelected ? Colors.black : Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
+        children: [
+          // 1. Row Pilihan Mode Rasio
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: CameraAspectRatioMode.values.map((mode) {
+                final isSelected = mode == _aspectRatioMode;
+                return GestureDetector(
+                  onTap: () => _setAspectRatio(mode),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isSelected ? const Color(0xFFF59E0B) : Colors.white.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      mode.label,
+                      style: TextStyle(
+                        color: isSelected ? Colors.black : Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+
+          // 2. Sub-Panel Pengaturan Tinggi Vertikal (Khusus Mode Custom)
+          if (_aspectRatioMode == CameraAspectRatioMode.custom) ...[
+            const SizedBox(height: 8),
+            Container(height: 1, width: 260, color: Colors.white12),
+            const SizedBox(height: 6),
+            // Indikator teks tinggi
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.unfold_more_rounded, color: Color(0xFFF59E0B), size: 15),
+                const SizedBox(width: 4),
+                Text(
+                  'Tinggi: ${(_customHeightRatio * 100).round()}% (${(_customHeightRatio * screenHeight).round()}px)',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  '(Bisa ditarik langsung di layar)',
+                  style: TextStyle(color: Colors.white54, fontSize: 9.5),
+                ),
+              ],
+            ),
+            // Slider Tinggi
+            SizedBox(
+              width: 270,
+              child: SliderTheme(
+                data: SliderThemeData(
+                  trackHeight: 3.0,
+                  activeTrackColor: const Color(0xFFF59E0B),
+                  inactiveTrackColor: Colors.white24,
+                  thumbColor: const Color(0xFFF59E0B),
+                  overlayColor: const Color(0xFFF59E0B).withOpacity(0.2),
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.5),
+                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 13.0),
+                ),
+                child: Slider(
+                  value: _customHeightRatio,
+                  min: 0.15,
+                  max: 0.90,
+                  onChanged: (val) {
+                    setState(() {
+                      _customHeightRatio = val;
+                    });
+                  },
                 ),
               ),
             ),
-          );
-        }).toList(),
+            // Quick preset chips
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [0.20, 0.35, 0.50, 0.65, 0.80].map((preset) {
+                  final isCurrent = (_customHeightRatio - preset).abs() < 0.04;
+                  return GestureDetector(
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      setState(() {
+                        _customHeightRatio = preset;
+                      });
+                    },
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                      decoration: BoxDecoration(
+                        color: isCurrent ? const Color(0xFFF59E0B) : Colors.white.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: isCurrent ? const Color(0xFFF59E0B) : Colors.white12,
+                          width: 0.8,
+                        ),
+                      ),
+                      child: Text(
+                        '${(preset * 100).round()}%',
+                        style: TextStyle(
+                          color: isCurrent ? Colors.black : Colors.white70,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ],
       ),
     );
+  }
+
+  // ========== OVERLAY RESIZE DRAG HANDLES UNTUK MODE CUSTOM ==========
+  List<Widget> _buildCustomCropOverlay(
+    double previewWidth,
+    double previewHeight,
+    double screenHeight,
+  ) {
+    return [
+      // Garis tepi penanda bingkai custom (kuning amber)
+      IgnorePointer(
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: const Color(0xFFF59E0B).withOpacity(0.70),
+              width: 1.8,
+            ),
+          ),
+        ),
+      ),
+
+      // Gagang Geser Atas (Top Drag Handle)
+      Positioned(
+        top: -16,
+        left: 0,
+        right: 0,
+        child: Center(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragStart: (_) {
+              setState(() => _isDraggingCropHandle = true);
+              HapticFeedback.selectionClick();
+            },
+            onVerticalDragUpdate: (details) {
+              final dy = details.primaryDelta ?? 0;
+              final deltaRatio = -(dy * 2.0) / screenHeight;
+              final newRatio = (_customHeightRatio + deltaRatio).clamp(0.15, 0.90);
+              if ((newRatio - _customHeightRatio).abs() > 0.001) {
+                setState(() => _customHeightRatio = newRatio);
+              }
+            },
+            onVerticalDragEnd: (_) {
+              setState(() => _isDraggingCropHandle = false);
+              HapticFeedback.lightImpact();
+              _showStatus(
+                '📐 Tinggi Kustom: ${(_customHeightRatio * 100).round()}% (${previewHeight.round()}px)',
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.85),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFF59E0B).withOpacity(0.35),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.unfold_more_rounded, color: Color(0xFFF59E0B), size: 15),
+                  SizedBox(width: 4),
+                  Text(
+                    'Geser Tinggi',
+                    style: TextStyle(
+                      color: Color(0xFFF59E0B),
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+
+      // Gagang Geser Bawah (Bottom Drag Handle)
+      Positioned(
+        bottom: -16,
+        left: 0,
+        right: 0,
+        child: Center(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragStart: (_) {
+              setState(() => _isDraggingCropHandle = true);
+              HapticFeedback.selectionClick();
+            },
+            onVerticalDragUpdate: (details) {
+              final dy = details.primaryDelta ?? 0;
+              final deltaRatio = (dy * 2.0) / screenHeight;
+              final newRatio = (_customHeightRatio + deltaRatio).clamp(0.15, 0.90);
+              if ((newRatio - _customHeightRatio).abs() > 0.001) {
+                setState(() => _customHeightRatio = newRatio);
+              }
+            },
+            onVerticalDragEnd: (_) {
+              setState(() => _isDraggingCropHandle = false);
+              HapticFeedback.lightImpact();
+              _showStatus(
+                '📐 Tinggi Kustom: ${(_customHeightRatio * 100).round()}% (${previewHeight.round()}px)',
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.85),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFF59E0B).withOpacity(0.35),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.unfold_more_rounded, color: Color(0xFFF59E0B), size: 15),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${(_customHeightRatio * 100).round()}%',
+                    style: const TextStyle(
+                      color: Color(0xFFF59E0B),
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+
+      // Floating Badge saat sedang menggeser handle
+      if (_isDraggingCropHandle)
+        Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.88),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.55),
+                  blurRadius: 10,
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.aspect_ratio_rounded, color: Color(0xFFF59E0B), size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  'Tinggi: ${previewHeight.round()}px (${(_customHeightRatio * 100).round()}%)',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+    ];
   }
 }
