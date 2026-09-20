@@ -235,7 +235,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_confi
 # 2. Qwen 3.7 Flash (Fallback 2)
 # 3. Gemini 3.5 Flash (Fallback 3)
 # 4. Gemini 3.5 Flash Lite (Fallback 4)
-# 5. Gemini 3.6 Flash, 3.7 Flash, Flash Latest, 2.5 Flash
+# 5. Gemini 3.6 Flash, 3.7 Flash, Flash Latest
 DEFAULT_MODELS = [
     "qwen3.8-flash",
     "qwen3.7-flash",
@@ -243,8 +243,7 @@ DEFAULT_MODELS = [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
-    "gemini-flash-latest",
-    "gemini-2.5-flash"
+    "gemini-flash-latest"
 ]
 
 
@@ -263,6 +262,7 @@ class AIService:
             "dashscope_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
             "model": "qwen3.8-flash",
+            "thinking_mode": "dynamic",
             "qwen_connect_timeout": 10,
             "qwen_chunk_timeout": 15,
             "prompt_template": "Tolong jawab, selesaikan, atau jelaskan persoalan ini dengan tepat, padat, terstruktur, dan to the point. Gunakan format teks biasa yang mudah dibaca. Gunakan heading (#) atau bold (**) hanya jika benar-benar membantu, jangan di setiap baris. Untuk rumus matematika, tulis dalam bentuk teks biasa (misal: x^2 + 3x = 0)."
@@ -459,7 +459,7 @@ class AIService:
 
                     if not got_first_chunk:
                         got_first_chunk = True
-                        print(f"[AIService] ✓ {model_name} merespon — sedang memproses...")
+                        print(f"[AIService] [OK] {model_name} merespon — sedang memproses...")
 
                     content = delta.get("content")
                     reasoning = delta.get("reasoning_content")
@@ -475,15 +475,15 @@ class AIService:
                     f"DashScope {tag} tidak mengirim data apapun dalam {chunk_timeout}s — model kemungkinan stuck."
                 )
             # Sudah dapat data tapi stream terhenti — gunakan apa yang sudah ada
-            print(f"[AIService] ⚠ Stream {model_name} terhenti, menggunakan respon parsial...")
+            print(f"[AIService] [Warning] Stream {model_name} terhenti, menggunakan respon parsial...")
         except requests.exceptions.ChunkedEncodingError as e:
             if not got_first_chunk:
                 raise ValueError(f"Koneksi DashScope {tag} terputus sebelum data diterima: {e}")
-            print(f"[AIService] ⚠ Stream {model_name} terputus: {e}, menggunakan respon parsial...")
+            print(f"[AIService] [Warning] Stream {model_name} terputus: {e}, menggunakan respon parsial...")
         except Exception as e:
             if not got_first_chunk:
                 raise ValueError(f"Error stream DashScope {tag}: {e}")
-            print(f"[AIService] ⚠ Stream {model_name} error: {e}, menggunakan respon parsial...")
+            print(f"[AIService] [Warning] Stream {model_name} error: {e}, menggunakan respon parsial...")
         finally:
             resp.close()
 
@@ -494,26 +494,38 @@ class AIService:
         raw_answer = strip_think_tags(raw_answer)
         return clean_latex_to_markdown(raw_answer)
 
-    def _query_qwen_text(self, model_name: str, prompt: str) -> str:
+    def _query_qwen_text(self, model_name: str, prompt: str, thinking_mode: Optional[str] = None) -> str:
         """
         Kueri model Qwen teks via DashScope OpenAI-compatible endpoint (streaming).
         Menghindari bug 'maximum recursion depth exceeded' yang terjadi akibat konflik
         antara eventlet.monkey_patch() dan truststore pada pustaka openai/httpx.
         """
+        mode = (thinking_mode or self.config.get("thinking_mode", "dynamic")).strip().lower()
+        enable_thinking = (mode != "off")
+
         payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "enable_thinking": True
+            "enable_thinking": enable_thinking
         }
         return self._stream_qwen_request(model_name, payload)
 
-    def _query_qwen_multimodal(self, model_name: str, prompt: str, raw_bytes: bytes, mime_type: str) -> str:
+    def _query_qwen_multimodal(
+        self,
+        model_name: str,
+        prompt: str,
+        raw_bytes: bytes,
+        mime_type: str,
+        thinking_mode: Optional[str] = None
+    ) -> str:
         """
         Kueri model Qwen multimodal (vision) via DashScope OpenAI-compatible endpoint (streaming).
         Mendukung analisis soal Figural, gambar, dan diagram secara langsung (0 token lokal OCR).
         """
         b64_str = base64.b64encode(raw_bytes).decode("utf-8")
         data_url = f"data:{mime_type};base64,{b64_str}"
+        mode = (thinking_mode or self.config.get("thinking_mode", "dynamic")).strip().lower()
+        enable_thinking = (mode != "off")
 
         payload = {
             "model": model_name,
@@ -529,18 +541,18 @@ class AIService:
                     ]
                 }
             ],
-            "enable_thinking": True
+            "enable_thinking": enable_thinking
         }
         return self._stream_qwen_request(model_name, payload, label=f"{model_name} Vision")
 
-    def _query_gemini_text(self, model_name: str, prompt: str) -> str:
+    def _query_gemini_text(self, model_name: str, prompt: str, thinking_mode: Optional[str] = None) -> str:
         """Kueri model Gemini teks via google-genai SDK."""
         if not self._gemini_client:
             self._init_gemini_client()
         if not self._gemini_client:
             raise ValueError("GEMINI_API_KEY belum diset.")
 
-        gen_config = self._get_thinking_config(model_name)
+        gen_config = self._get_thinking_config(model_name, thinking_mode=thinking_mode)
         response = self._gemini_client.models.generate_content(
             model=model_name,
             contents=prompt,
@@ -565,7 +577,14 @@ class AIService:
         answer_text = strip_think_tags(answer_text)
         return clean_latex_to_markdown(answer_text)
 
-    def _query_gemini_multimodal(self, model_name: str, prompt: str, raw_bytes: bytes, mime_type: str) -> str:
+    def _query_gemini_multimodal(
+        self,
+        model_name: str,
+        prompt: str,
+        raw_bytes: bytes,
+        mime_type: str,
+        thinking_mode: Optional[str] = None
+    ) -> str:
         """Kueri model Gemini multimodal (vision) via google-genai SDK."""
         if not self._gemini_client:
             self._init_gemini_client()
@@ -576,7 +595,7 @@ class AIService:
             raise ValueError("Pustaka google-genai belum tersedia di server.")
 
         image_part = types.Part.from_bytes(data=raw_bytes, mime_type=mime_type)
-        gen_config = self._get_thinking_config(model_name)
+        gen_config = self._get_thinking_config(model_name, thinking_mode=thinking_mode)
         response = self._gemini_client.models.generate_content(
             model=model_name,
             contents=[image_part, prompt],
@@ -601,43 +620,53 @@ class AIService:
         answer_text = strip_think_tags(answer_text)
         return clean_latex_to_markdown(answer_text)
 
-    def _get_thinking_config(self, model_name: str) -> Optional[Any]:
+    def _get_thinking_config(self, model_name: str, thinking_mode: Optional[str] = None) -> Optional[Any]:
         """
         Mendapatkan GenerateContentConfig dengan konfigurasi thinking yang tepat
-        sesuai standar arsitektur Google Gemini (per 2026):
-        - Gemini 3.x series (3.8, 3.7, 3.6, 3.5, 3.5-lite, flash-latest):
-          Thinking AKTIF dengan thinking_level="HIGH" tanpa menyertakan raw thoughts (include_thoughts=False).
-        - Gemini 2.5 series (legacy):
-          Thinking AKTIF dengan thinking_budget=-1 (dinamis) tanpa menyertakan thoughts.
-        - Model lain / non-thinking (misal Gemini 1.5/2.0):
-          Hanya GenerateContentConfig dasar tanpa thinking_config.
+        sesuai standar arsitektur Google Gemini 3.x / Flash Latest (per 2026):
+        - Mode 'off': Nonaktifkan thinking (thinking_budget=0).
+        - Mode 'high': Level HIGH.
+        - Mode 'medium': Level MEDIUM.
+        - Mode 'low': Level LOW.
+        - Mode 'dynamic' (default): Level HIGH untuk model penalaran mendalam.
         """
         if not _genai_available:
             return None
 
         afc_config = types.AutomaticFunctionCallingConfig(disable=True)
-        m = model_name.lower()
-        if any(v in m for v in ["gemini-3", "flash-latest"]):
+        mode = (thinking_mode or self.config.get("thinking_mode", "dynamic")).strip().lower()
+
+        if mode == "off":
             return types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
-                    thinking_level="HIGH",
+                    thinking_budget=0,
                     include_thoughts=False
                 ),
                 automatic_function_calling=afc_config
             )
-        elif "gemini-2.5" in m:
-            return types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    thinking_budget=-1,
-                    include_thoughts=False
-                ),
-                automatic_function_calling=afc_config
-            )
+
+        level = "HIGH"
+        if mode == "low":
+            level = "LOW"
+        elif mode == "medium":
+            level = "MEDIUM"
+        elif mode == "high":
+            level = "HIGH"
+
         return types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(
+                thinking_level=level,
+                include_thoughts=False
+            ),
             automatic_function_calling=afc_config
         )
 
-    def query_llm(self, text_content: str, custom_instruction: Optional[str] = None) -> Dict[str, Any]:
+    def query_llm(
+        self,
+        text_content: str,
+        custom_instruction: Optional[str] = None,
+        thinking_mode: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Mengirimkan teks OCR ke LLM dengan urutan fallback:
         1. Model utama (default: qwen3.8-flash)
@@ -671,13 +700,13 @@ class AIService:
                     if not api_key:
                         print(f"[AIService] DashScope API Key belum diset untuk {model_name}. Fallback ke model berikutnya...")
                         continue
-                    ans = self._query_qwen_text(model_name, prompt)
+                    ans = self._query_qwen_text(model_name, prompt, thinking_mode=thinking_mode)
                 else:
                     api_key = (self.config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or "").strip()
                     if not api_key:
                         print(f"[AIService] GEMINI_API_KEY belum diset untuk {model_name}. Fallback ke model berikutnya...")
                         continue
-                    ans = self._query_gemini_text(model_name, prompt)
+                    ans = self._query_gemini_text(model_name, prompt, thinking_mode=thinking_mode)
 
                 if ans:
                     return {
@@ -700,7 +729,8 @@ class AIService:
     def query_multimodal(
         self,
         image_data: str | bytes,
-        custom_instruction: Optional[str] = None
+        custom_instruction: Optional[str] = None,
+        thinking_mode: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Mengirimkan GAMBAR LANGSUNG ke model Vision (Qwen / Gemini)
@@ -761,13 +791,13 @@ class AIService:
                     if not api_key:
                         print(f"[AIService] DashScope API Key belum diset untuk vision {model_name}. Fallback ke model berikutnya...")
                         continue
-                    ans = self._query_qwen_multimodal(model_name, prompt, raw_bytes, mime_type)
+                    ans = self._query_qwen_multimodal(model_name, prompt, raw_bytes, mime_type, thinking_mode=thinking_mode)
                 else:
                     api_key = (self.config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or "").strip()
                     if not api_key:
                         print(f"[AIService] GEMINI_API_KEY belum diset untuk vision {model_name}. Fallback ke model berikutnya...")
                         continue
-                    ans = self._query_gemini_multimodal(model_name, prompt, raw_bytes, mime_type)
+                    ans = self._query_gemini_multimodal(model_name, prompt, raw_bytes, mime_type, thinking_mode=thinking_mode)
 
                 if ans:
                     return {
@@ -792,7 +822,8 @@ class AIService:
         ocr_text: Optional[str] = None,
         image_data: Optional[str] = None,
         prompt: Optional[str] = None,
-        mode: Optional[str] = "ocr"
+        mode: Optional[str] = "ocr",
+        thinking_mode: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Pipeline lengkap:
@@ -802,9 +833,11 @@ class AIService:
             2. Jika HP mengirim gambar tanpa ocr_text: jalankan RapidOCR lokal untuk ekstraksi teks.
             3. Kirim teks hasil OCR ke LLM untuk dijawab.
         """
+        effective_thinking = (thinking_mode or self.config.get("thinking_mode", "dynamic")).strip().lower()
+
         if mode == "vision" and image_data:
-            print("[AIService] 👁️ Mode Vision Langsung (Multimodal Figural) diaktifkan...")
-            llm_res = self.query_multimodal(image_data=image_data, custom_instruction=prompt)
+            print(f"[AIService] Mode Vision Langsung (Multimodal Figural) diaktifkan [Thinking: {effective_thinking}]...")
+            llm_res = self.query_multimodal(image_data=image_data, custom_instruction=prompt, thinking_mode=effective_thinking)
             if not llm_res.get("success"):
                 return {
                     "success": False,
@@ -817,6 +850,7 @@ class AIService:
                 "ocr_text": "(Analisis Gambar Figural Langsung)",
                 "llm_answer": llm_res.get("answer", ""),
                 "model_used": llm_res.get("model", ""),
+                "thinking_mode": effective_thinking,
                 "is_vision": True
             }
 
@@ -834,8 +868,8 @@ class AIService:
                 "ocr_text": ""
             }
 
-        print(f"[AIService] Teks OCR didapat ({len(final_ocr)} karakter). Mengirim ke model AI...")
-        llm_res = self.query_llm(final_ocr, custom_instruction=prompt)
+        print(f"[AIService] Teks OCR didapat ({len(final_ocr)} karakter). Mengirim ke model AI [Thinking: {effective_thinking}]...")
+        llm_res = self.query_llm(final_ocr, custom_instruction=prompt, thinking_mode=effective_thinking)
 
         if not llm_res.get("success"):
             return {
@@ -849,6 +883,7 @@ class AIService:
             "ocr_text": final_ocr,
             "llm_answer": llm_res.get("answer", ""),
             "model_used": llm_res.get("model", ""),
+            "thinking_mode": effective_thinking,
             "is_vision": False
         }
 

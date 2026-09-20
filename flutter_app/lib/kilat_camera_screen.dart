@@ -29,6 +29,8 @@ class KilatCameraScreen extends StatefulWidget {
   final String? prompt;
   final Function(int shotCount, File? lastImage, String lastOcr)? onFinished;
   final CameraAspectRatioMode initialRatio;
+  final String? initialThinkingMode;
+  final ValueChanged<String>? onThinkingModeChanged;
 
   const KilatCameraScreen({
     Key? key,
@@ -36,6 +38,8 @@ class KilatCameraScreen extends StatefulWidget {
     this.prompt,
     this.onFinished,
     this.initialRatio = CameraAspectRatioMode.ratio4x3,
+    this.initialThinkingMode,
+    this.onThinkingModeChanged,
   }) : super(key: key);
 
   @override
@@ -109,13 +113,15 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
   int _shotCount = 0;
   File? _lastCapturedFile;
   String _lastOcrText = '';
-  String _statusMessage = 'Arahkan ke soal lalu tap shutter ⚡';
+  String _statusMessage = 'Arahkan ke soal lalu tap shutter';
   Timer? _statusResetTimer;
+  late String _thinkingMode;
 
   @override
   void initState() {
     super.initState();
     _aspectRatioMode = widget.initialRatio;
+    _thinkingMode = widget.initialThinkingMode ?? 'dynamic';
     _zoomNotifier = ValueNotifier<double>(1.0);
 
     _focusAnimController = AnimationController(
@@ -695,17 +701,25 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
         : null;
 
     if (ocrResult.isNotEmpty) {
-      _showStatus('⚡ Soal #$shotIndex — Teks terdeteksi, dikirim ke AI...');
-      widget.socketService.sendAiQuery(text: ocrResult, prompt: prompt);
+      _showStatus('Soal #$shotIndex: Teks terdeteksi, dikirim ke AI...');
+      widget.socketService.sendAiQuery(
+        text: ocrResult,
+        prompt: prompt,
+        thinkingMode: _thinkingMode,
+      );
     } else {
       // Fallback: Kirim base64 gambar langsung ke server jika ML Kit HP kosong
-      _showStatus('🔄 Soal #$shotIndex — Mengirim gambar ke server PC...');
+      _showStatus('Soal #$shotIndex: Mengirim gambar ke server PC...');
       try {
         final bytes = await effectiveFile.readAsBytes();
         final base64Img = base64Encode(bytes);
-        widget.socketService.sendAiQuery(imageBase64: base64Img, prompt: prompt);
+        widget.socketService.sendAiQuery(
+          imageBase64: base64Img,
+          prompt: prompt,
+          thinkingMode: _thinkingMode,
+        );
       } catch (e) {
-        _showStatus('❌ Gagal encode gambar: $e');
+        _showStatus('Gagal encode gambar: $e');
       }
     }
   }
@@ -739,13 +753,13 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
         _lastCapturedFile = capturedFile;
       });
 
-      _showStatus('📸 Figural #$_shotCount — Mengirim gambar langsung ke AI...', isPersistent: true);
+      _showStatus('Figural #$_shotCount: Mengirim gambar langsung ke AI...', isPersistent: true);
 
       // Background processing: crop (jika ada ratio) lalu kirim base64 gambar langsung
       _processVisionAndSend(capturedFile, _shotCount, targetRatio);
     } catch (e) {
       debugPrint('Take picture vision error: $e');
-      _showStatus('❌ Gagal jepret: $e');
+      _showStatus('Gagal jepret: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -783,15 +797,16 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
           ? widget.prompt!.trim()
           : null;
 
-      _showStatus('🚀 Figural #$shotIndex — Gambar terkirim! Cek terminal PC...');
+      _showStatus('Figural #$shotIndex: Gambar terkirim! Cek terminal PC...');
       widget.socketService.sendAiQuery(
         imageBase64: base64Img,
         prompt: prompt,
         mode: 'vision',
+        thinkingMode: _thinkingMode,
       );
     } catch (e) {
       debugPrint('Gagal encode/kirim gambar vision: $e');
-      _showStatus('❌ Gagal kirim gambar: $e');
+      _showStatus('Gagal kirim gambar: $e');
     }
   }
 
@@ -1086,6 +1101,10 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
 
                   // Tombol Pemilih Rasio Kamera (Aspect Ratio)
                   _buildRatioButton(),
+                  const SizedBox(width: 8),
+
+                  // Tombol Mode Thinking
+                  _buildThinkingModeButton(),
                   const SizedBox(width: 8),
 
                   // Tombol Flash
@@ -1626,7 +1645,7 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
       _focusPoint = null;
       _isFocusLocked = false;
     });
-    _showStatus('📐 Rasio Kamera: ${mode.description}');
+    _showStatus('Rasio Kamera: ${mode.description}');
   }
 
   void _toggleRatioSelector() {
@@ -1670,6 +1689,104 @@ class _KilatCameraScreenState extends State<KilatCameraScreen>
               label,
               style: TextStyle(
                 color: _showRatioSelector ? Colors.black : Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 11.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _cycleThinkingMode() {
+    HapticFeedback.selectionClick();
+    String nextMode;
+    switch (_thinkingMode) {
+      case 'dynamic':
+        nextMode = 'high';
+        break;
+      case 'high':
+        nextMode = 'low';
+        break;
+      case 'low':
+        nextMode = 'off';
+        break;
+      default:
+        nextMode = 'dynamic';
+        break;
+    }
+    setState(() {
+      _thinkingMode = nextMode;
+    });
+    widget.onThinkingModeChanged?.call(nextMode);
+
+    String label;
+    switch (nextMode) {
+      case 'high':
+        label = 'Maksimal (High)';
+        break;
+      case 'low':
+        label = 'Minimal (Low)';
+        break;
+      case 'off':
+        label = 'Nonaktif (Off)';
+        break;
+      default:
+        label = 'Dinamis (Auto)';
+        break;
+    }
+    _showStatus('Thinking: $label');
+  }
+
+  Widget _buildThinkingModeButton() {
+    String label;
+    Color activeColor;
+    switch (_thinkingMode) {
+      case 'high':
+        label = 'High';
+        activeColor = const Color(0xFF38BDF8);
+        break;
+      case 'low':
+        label = 'Low';
+        activeColor = const Color(0xFF34D399);
+        break;
+      case 'off':
+        label = 'Off';
+        activeColor = const Color(0xFFF87171);
+        break;
+      default:
+        label = 'Auto';
+        activeColor = const Color(0xFFFBBF24);
+        break;
+    }
+
+    return GestureDetector(
+      onTap: _cycleThinkingMode,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.55),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: activeColor.withOpacity(0.8),
+            width: 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.psychology_outlined,
+              size: 14,
+              color: activeColor,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: activeColor,
                 fontWeight: FontWeight.bold,
                 fontSize: 11.5,
               ),

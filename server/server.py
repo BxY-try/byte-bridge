@@ -260,6 +260,8 @@ def get_ai_config():
     return jsonify({
         "success": True,
         "model": cfg.get("model", "qwen3.8-flash"),
+        "thinking_mode": cfg.get("thinking_mode", "dynamic"),
+        "available_thinking_modes": ["dynamic", "high", "medium", "low", "off"],
         "dashscope_base_url": cfg.get("dashscope_base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         "has_dashscope_key": bool(dash_key),
         "masked_dashscope_key": mask_key(dash_key),
@@ -273,8 +275,7 @@ def get_ai_config():
             "gemini-3.5-flash-lite",
             "gemini-3.6-flash",
             "gemini-3.7-flash",
-            "gemini-flash-latest",
-            "gemini-2.5-flash"
+            "gemini-flash-latest"
         ]
     })
 
@@ -450,18 +451,21 @@ def on_ai_query(data):
     image_data = data.get("image")
     prompt = data.get("prompt")
     mode = data.get("mode", "ocr")
+    thinking_mode = data.get("thinking_mode")
 
     start_time = time.time()
 
     print("\n" + "=" * 74)
     if mode == "vision":
-        print("📸 [BYTEBRIDGE AI ASSISTANT] - Menerima gambar figural/visual langsung dari HP...")
+        print("[BYTEBRIDGE AI ASSISTANT] - Menerima gambar figural/visual langsung dari HP...")
     else:
-        print("📸 [BYTEBRIDGE AI ASSISTANT] - Menerima permintaan teks OCR dari HP...")
+        print("[BYTEBRIDGE AI ASSISTANT] - Menerima permintaan teks OCR dari HP...")
     print("=" * 74)
 
     # Animasi live ticker detik di terminal PC selama AI sedang berpikir/memproses
     model_display = ai_service.config.get("model", "AI")
+    effective_thinking = (thinking_mode or ai_service.config.get("thinking_mode", "dynamic")).strip().lower()
+
     if _has_rich and _rich_console:
         stop_ticker = threading.Event()
         def _ticker_thread(status_obj, t0, is_figural):
@@ -469,22 +473,22 @@ def on_ai_query(data):
             while not stop_ticker.wait(0.2):
                 sec = time.time() - t0
                 status_obj.update(
-                    f"[bold cyan]⏳ AI ({model_display}) sedang memproses & berpikir ({mode_desc})... [bold yellow]{sec:.1f}s[/bold yellow][/bold cyan]"
+                    f"[bold cyan]AI ({model_display}) sedang memproses & berpikir [{effective_thinking}] ({mode_desc})... [bold yellow]{sec:.1f}s[/bold yellow][/bold cyan]"
                 )
 
         mode_desc_init = "Vision Figural" if mode == "vision" else "OCR Teks"
-        status_init_msg = f"[bold cyan]⏳ AI ({model_display}) sedang memproses & berpikir ({mode_desc_init})... [bold yellow]0.0s[/bold yellow][/bold cyan]"
+        status_init_msg = f"[bold cyan]AI ({model_display}) sedang memproses & berpikir [{effective_thinking}] ({mode_desc_init})... [bold yellow]0.0s[/bold yellow][/bold cyan]"
         with _rich_console.status(status_init_msg, spinner="dots") as status_obj:
             t = threading.Thread(target=_ticker_thread, args=(status_obj, start_time, mode == "vision"), daemon=True)
             t.start()
             try:
-                res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode)
+                res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode, thinking_mode=thinking_mode)
             finally:
                 stop_ticker.set()
                 t.join(timeout=0.4)
     else:
-        print(f"⏳ AI ({model_display}) sedang memproses...")
-        res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode)
+        print(f"AI ({model_display}) sedang memproses [{effective_thinking}]...")
+        res = ai_service.process(ocr_text=ocr_text, image_data=image_data, prompt=prompt, mode=mode, thinking_mode=thinking_mode)
 
     elapsed_time = time.time() - start_time
 
@@ -496,6 +500,7 @@ def on_ai_query(data):
         except Exception:
             pass
         model_name = res.get("model_used", "Gemini")
+        actual_thinking = res.get("thinking_mode", effective_thinking)
         is_vision = res.get("is_vision", False) or mode == "vision"
 
         # 1. Cetak ke Terminal secara BESAR, RAPI, dan JELAS menggunakan Rich
@@ -505,27 +510,29 @@ def on_ai_query(data):
                 _rich_console.print()
                 # Badge model yang mencolok + Waktu proses respons
                 model_badge = RichText()
-                model_badge.append("🤖 Model: ", style="bold white")
+                model_badge.append("Model: ", style="bold white")
                 model_badge.append(model_name, style="bold cyan")
-                model_badge.append("  │  ", style="dim")
+                model_badge.append("  |  ", style="dim")
+                model_badge.append(f"Thinking: {actual_thinking}", style="bold blue")
+                model_badge.append("  |  ", style="dim")
                 if is_vision:
                     model_badge.append("Mode: Direct Vision (Figural)", style="bold magenta")
                 else:
                     model_badge.append(f"OCR: {len(detected_text)} karakter", style="bold yellow")
-                model_badge.append("  │  ", style="dim")
-                model_badge.append(f"⏱️ {elapsed_time:.2f}s", style="bold green")
-                _rich_console.print(Panel(model_badge, title="[bold green]⚡ BYTEBRIDGE AI[/bold green]", border_style="green"))
+                model_badge.append("  |  ", style="dim")
+                model_badge.append(f"Waktu: {elapsed_time:.2f}s", style="bold green")
+                _rich_console.print(Panel(model_badge, title="[bold green]BYTEBRIDGE AI[/bold green]", border_style="green"))
 
                 # Tampilkan info input jika relevan
                 if not is_vision and detected_text:
-                    _rich_console.print(Panel(detected_text, title="[bold yellow]📸 Teks Terdeteksi (OCR)[/bold yellow]", border_style="yellow"))
+                    _rich_console.print(Panel(detected_text, title="[bold yellow]Teks Terdeteksi (OCR)[/bold yellow]", border_style="yellow"))
                 elif is_vision and prompt:
-                    _rich_console.print(Panel(prompt, title="[bold magenta]💬 Instruksi Pengguna[/bold magenta]", border_style="magenta"))
+                    _rich_console.print(Panel(prompt, title="[bold magenta]Instruksi Pengguna[/bold magenta]", border_style="magenta"))
 
                 # Panel jawaban AI — Markdown dirender cantik + durasi waktu respons
-                title_panel = f"[bold magenta]🧩 Bedah Soal Figural AI ({model_name})[/bold magenta]" if is_vision else f"[bold cyan]🤖 Jawaban AI ({model_name})[/bold cyan]"
+                title_panel = f"[bold magenta]Bedah Soal Figural AI ({model_name})[/bold magenta]" if is_vision else f"[bold cyan]Jawaban AI ({model_name})[/bold cyan]"
                 border_color = "magenta" if is_vision else "cyan"
-                subtitle_panel = f"[bold green]⏱️ Waktu Respons: {elapsed_time:.2f} detik[/bold green]"
+                subtitle_panel = f"[bold green]Waktu Respons: {elapsed_time:.2f} detik[/bold green]"
                 _rich_console.print(Panel(RichMarkdown(llm_answer), title=title_panel, subtitle=subtitle_panel, border_style=border_color, padding=(1, 2)))
                 _rich_console.print()
                 printed_rich = True
@@ -537,12 +544,12 @@ def on_ai_query(data):
             # Fallback jika rich tidak tersedia atau gagal render
             mode_lbl = "Direct Vision (Figural)" if is_vision else f"OCR ({len(detected_text)} karakter)"
             print("\n" + "=" * 74)
-            print(f"🤖 Model: {model_name} | Mode: {mode_lbl} | ⏱️ Waktu: {elapsed_time:.2f}s")
+            print(f"Model: {model_name} | Thinking: {actual_thinking} | Mode: {mode_lbl} | Waktu: {elapsed_time:.2f}s")
             print("=" * 74)
             if not is_vision and detected_text:
-                print(f"\n📸 TEKS OCR:\n{detected_text}")
-            print(f"\n🤖 JAWABAN AI:\n{llm_answer}")
-            print(f"\n⏱️ Selesai dalam: {elapsed_time:.2f} detik")
+                print(f"\nTEKS OCR:\n{detected_text}")
+            print(f"\nJAWABAN AI:\n{llm_answer}")
+            print(f"\nSelesai dalam: {elapsed_time:.2f} detik")
             print("\n" + "=" * 74 + "\n")
 
         # 2. Salin jawaban ke clipboard Windows secara hening
@@ -557,6 +564,7 @@ def on_ai_query(data):
             "ocr_text": detected_text,
             "llm_answer": llm_answer,
             "model": model_name,
+            "thinking_mode": actual_thinking,
             "mode": mode,
             "elapsed_time": round(elapsed_time, 2)
         })
@@ -565,12 +573,12 @@ def on_ai_query(data):
         printed_err_rich = False
         if _has_rich and _rich_console:
             try:
-                _rich_console.print(Panel(f"[bold red]❌ {err_msg} (setelah {elapsed_time:.2f}s)[/bold red]", title="[red]AI Error[/red]", border_style="red"))
+                _rich_console.print(Panel(f"[bold red]Error: {err_msg} (setelah {elapsed_time:.2f}s)[/bold red]", title="[red]AI Error[/red]", border_style="red"))
                 printed_err_rich = True
             except Exception:
                 printed_err_rich = False
         if not printed_err_rich:
-            print(f"\n[AI Error] ❌ {err_msg} ({elapsed_time:.2f}s)\n" + "=" * 74 + "\n")
+            print(f"\n[AI Error] {err_msg} ({elapsed_time:.2f}s)\n" + "=" * 74 + "\n")
         emit("ai_response", {
             "success": False,
             "error": err_msg,
@@ -596,6 +604,8 @@ def on_get_ai_config():
     emit("get_ai_config_response", {
         "success": True,
         "model": cfg.get("model", "qwen3.8-flash"),
+        "thinking_mode": cfg.get("thinking_mode", "dynamic"),
+        "available_thinking_modes": ["dynamic", "high", "medium", "low", "off"],
         "dashscope_base_url": cfg.get("dashscope_base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         "has_dashscope_key": bool(dash_key),
         "masked_dashscope_key": mask_key(dash_key),
@@ -609,8 +619,7 @@ def on_get_ai_config():
             "gemini-3.5-flash-lite",
             "gemini-3.6-flash",
             "gemini-3.7-flash",
-            "gemini-flash-latest",
-            "gemini-2.5-flash"
+            "gemini-flash-latest"
         ]
     })
 

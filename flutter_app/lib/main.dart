@@ -112,6 +112,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _aiResponseAnswer;
   bool _isAiLoading = false;
   String _aiStatusMessage = '';
+  String _thinkingMode = 'dynamic';
   final TextEditingController _aiPromptController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
 
@@ -212,7 +213,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _state = ConnState.disconnected;
             if (_isAiLoading) {
               _isAiLoading = false;
-              _aiStatusMessage = '❌ Terputus dari PC saat menunggu respon AI.';
+              _aiStatusMessage = 'Terputus dari PC saat menunggu respon AI.';
             }
           });
         }
@@ -224,7 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _state = ConnState.disconnected;
             if (_isAiLoading) {
               _isAiLoading = false;
-              _aiStatusMessage = '❌ Koneksi terputus ke PC.';
+              _aiStatusMessage = 'Koneksi terputus ke PC.';
             }
           });
         }
@@ -242,16 +243,18 @@ class _HomeScreenState extends State<HomeScreen> {
       if (data['success'] == true) {
         _extractedOcrText = data['ocr_text'];
         _aiResponseAnswer = data['llm_answer'];
-        final model = data['model'] ?? 'Gemini';
+        final model = data['model'] ?? 'AI';
+        final th = data['thinking_mode'];
+        final thStr = th != null ? ' [$th]' : '';
         final elapsed = data['elapsed_time'];
         final timeStr = elapsed != null ? ' dalam ${elapsed}s' : '';
         if (_kilatShotCount > 0) {
-          _aiStatusMessage = '✅ Soal #$_kilatShotCount dijawab ($model)$timeStr — Cek Terminal PC! Siap jepret lagi ⚡';
+          _aiStatusMessage = 'Soal #$_kilatShotCount dijawab ($model$thStr)$timeStr — Cek Terminal PC.';
         } else {
-          _aiStatusMessage = '✅ Selesai ($model)$timeStr! Jawaban di Terminal PC & clipboard.';
+          _aiStatusMessage = 'Selesai ($model$thStr)$timeStr. Jawaban di Terminal PC & clipboard.';
         }
       } else {
-        _aiStatusMessage = '❌ Error: ${data['error'] ?? 'Gagal memproses AI'}';
+        _aiStatusMessage = 'Error: ${data['error'] ?? 'Gagal memproses AI'}';
       }
     });
   }
@@ -262,7 +265,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted && _isAiLoading) {
         setState(() {
           _isAiLoading = false;
-          _aiStatusMessage = '❌ Timeout: Server tidak merespons dalam 30 detik. Silakan coba lagi.';
+          _aiStatusMessage = 'Timeout: Server tidak merespons dalam 30 detik. Silakan coba lagi.';
         });
       }
     });
@@ -286,7 +289,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _capturedImage = File(photo.path);
         _isAiLoading = true;
-        _aiStatusMessage = '📸 Memproses ekstraksi teks (OCR)...';
+        _aiStatusMessage = 'Memproses ekstraksi teks (OCR)...';
         _aiResponseAnswer = null;
       });
 
@@ -310,23 +313,31 @@ class _HomeScreenState extends State<HomeScreen> {
       _startAiTimeoutTimer();
       if (ocrResult.isNotEmpty) {
         setState(() {
-          _aiStatusMessage = '⚡ Mengirim teks OCR ke Gemini via Terminal Server PC...';
+          _aiStatusMessage = 'Mengirim teks OCR ke AI via Server PC...';
         });
-        _socketService.sendAiQuery(text: ocrResult, prompt: prompt);
+        _socketService.sendAiQuery(
+          text: ocrResult,
+          prompt: prompt,
+          thinkingMode: _thinkingMode,
+        );
       } else {
         // Fallback jika ML Kit tidak mendeteksi teks di HP, kirim ke server PC untuk RapidOCR lokal
         setState(() {
-          _aiStatusMessage = '🔄 Menjalankan OCR lokal di server PC (0 vision token)...';
+          _aiStatusMessage = 'Menjalankan OCR lokal di server PC...';
         });
         final bytes = await photo.readAsBytes();
         final base64Img = base64Encode(bytes);
-        _socketService.sendAiQuery(imageBase64: base64Img, prompt: prompt);
+        _socketService.sendAiQuery(
+          imageBase64: base64Img,
+          prompt: prompt,
+          thinkingMode: _thinkingMode,
+        );
       }
     } catch (e) {
       _aiTimeoutTimer?.cancel();
       setState(() {
         _isAiLoading = false;
-        _aiStatusMessage = '❌ Gagal: $e';
+        _aiStatusMessage = 'Gagal: $e';
       });
     }
   }
@@ -366,13 +377,21 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (ctx) => KilatCameraScreen(
           socketService: _socketService,
           prompt: prompt,
+          initialThinkingMode: _thinkingMode,
+          onThinkingModeChanged: (newMode) {
+            if (mounted) {
+              setState(() {
+                _thinkingMode = newMode;
+              });
+            }
+          },
           onFinished: (shotCount, lastImage, lastOcr) {
             if (mounted && shotCount > 0) {
               setState(() {
                 _kilatShotCount += shotCount;
                 if (lastImage != null) _capturedImage = lastImage;
                 if (lastOcr.isNotEmpty) _extractedOcrText = lastOcr;
-                _aiStatusMessage = '⚡ Mode Kilat: $shotCount soal terkirim ke PC! Cek terminal PC.';
+                _aiStatusMessage = 'Mode Kilat: $shotCount soal terkirim ke PC! Cek terminal PC.';
               });
             }
           },
@@ -3080,6 +3099,63 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 10),
 
+            // ===== PEMILIH MODE THINKING (REASONING) =====
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.cardBorder),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Mode Thinking (Reasoning):',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textDark,
+                        ),
+                      ),
+                      Text(
+                        _thinkingMode == 'high'
+                            ? 'Maksimal'
+                            : _thinkingMode == 'low'
+                                ? 'Minimal'
+                                : _thinkingMode == 'off'
+                                    ? 'Nonaktif'
+                                    : 'Dinamis',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: _thinkingMode == 'off'
+                              ? const Color(0xFFDC2626)
+                              : AppColors.accentGreen,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      _buildThinkingChip('dynamic', 'Dinamis'),
+                      const SizedBox(width: 6),
+                      _buildThinkingChip('high', 'High'),
+                      const SizedBox(width: 6),
+                      _buildThinkingChip('low', 'Low'),
+                      const SizedBox(width: 6),
+                      _buildThinkingChip('off', 'Off'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
             // ===== OPSI 1 (UTAMA): MODE KILAT FULL SCREEN =====
             GestureDetector(
               onTap: _openKilatCamera,
@@ -3119,7 +3195,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           Row(
                             children: [
                               const Text(
-                                '⚡ BUKA KAMERA KILAT',
+                                'BUKA KAMERA KILAT',
                                 style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w900,
@@ -3188,7 +3264,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text(
-                        '📸 Kamera Standar (Satu per Satu)',
+                        'Kamera Standar (Satu per Satu)',
                         style: TextStyle(
                           fontSize: 13.5,
                           fontWeight: FontWeight.w800,
@@ -3285,45 +3361,52 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               )
             else if (_aiStatusMessage.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFFEF2F2)
-                      : _aiStatusMessage.startsWith('⚡') ? const Color(0xFFFFFBEB)
-                      : const Color(0xFFF0FDF4),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFFCA5A5)
-                        : _aiStatusMessage.startsWith('⚡') ? const Color(0xFFFCD34D)
-                        : const Color(0xFF86EFAC),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      _aiStatusMessage.startsWith('❌') ? Icons.error_outline
-                          : _aiStatusMessage.startsWith('⚡') ? Icons.flash_on
-                          : Icons.check_circle_outline,
-                      size: 20,
-                      color: _aiStatusMessage.startsWith('❌') ? const Color(0xFFDC2626)
-                          : _aiStatusMessage.startsWith('⚡') ? const Color(0xFFF59E0B)
-                          : const Color(0xFF16A34A),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _aiStatusMessage,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: _aiStatusMessage.startsWith('❌') ? const Color(0xFF991B1B)
-                              : _aiStatusMessage.startsWith('⚡') ? const Color(0xFF92400E)
-                              : const Color(0xFF166534),
-                        ),
+              Builder(
+                builder: (context) {
+                  final msgLower = _aiStatusMessage.toLowerCase();
+                  final isErr = msgLower.startsWith('error') || msgLower.startsWith('gagal') || msgLower.startsWith('timeout') || msgLower.startsWith('terputus');
+                  final isInfo = msgLower.startsWith('soal') || msgLower.startsWith('mode') || msgLower.startsWith('mengirim') || msgLower.startsWith('menjalankan') || msgLower.startsWith('memproses');
+                  return Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isErr ? const Color(0xFFFEF2F2)
+                          : isInfo ? const Color(0xFFFFFBEB)
+                          : const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isErr ? const Color(0xFFFCA5A5)
+                            : isInfo ? const Color(0xFFFCD34D)
+                            : const Color(0xFF86EFAC),
                       ),
                     ),
-                  ],
-                ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isErr ? Icons.error_outline
+                              : isInfo ? Icons.info_outline
+                              : Icons.check_circle_outline,
+                          size: 20,
+                          color: isErr ? const Color(0xFFDC2626)
+                              : isInfo ? const Color(0xFFF59E0B)
+                              : const Color(0xFF16A34A),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _aiStatusMessage,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: isErr ? const Color(0xFF991B1B)
+                                  : isInfo ? const Color(0xFF92400E)
+                                  : const Color(0xFF166534),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             const SizedBox(height: 14),
 
@@ -3465,6 +3548,47 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThinkingChip(String mode, String label) {
+    final isSelected = _thinkingMode == mode;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          setState(() {
+            _thinkingMode = mode;
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isSelected
+                ? (mode == 'off' ? const Color(0xFFFEE2E2) : const Color(0xFFDCFCE7))
+                : const Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected
+                  ? (mode == 'off' ? const Color(0xFFEF4444) : AppColors.accentGreen)
+                  : const Color(0xFFCBD5E1),
+              width: isSelected ? 1.4 : 1.0,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              color: isSelected
+                  ? (mode == 'off' ? const Color(0xFF991B1B) : const Color(0xFF166534))
+                  : const Color(0xFF475569),
+            ),
+          ),
         ),
       ),
     );

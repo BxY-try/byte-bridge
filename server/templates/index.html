@@ -1351,14 +1351,14 @@
   <div id="settingsModal" class="modal-overlay">
     <div class="modal-card">
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h3>⚙️ Pengaturan Server & AI</h3>
+        <h3>Pengaturan Server & AI</h3>
         <button onclick="closeSettings()" style="background:none; border:none; font-size:1.3rem; cursor:pointer; color:var(--text-secondary);">✕</button>
       </div>
 
       <!-- Section AI -->
       <div style="background:var(--bg-secondary); padding:14px; border-radius:14px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
-          <strong style="font-size:0.95rem; color:var(--text-dark);">🤖 Konfigurasi AI & LLM</strong>
+          <strong style="font-size:0.95rem; color:var(--text-dark);">Konfigurasi AI & LLM</strong>
           <span id="aiModelActiveBadge" style="font-size:0.75rem; background:#dbeafe; color:#1d4ed8; padding:2px 8px; border-radius:6px; font-weight:600;">qwen3.8-flash</span>
         </div>
 
@@ -1372,7 +1372,17 @@
             <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
             <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
             <option value="gemini-flash-latest">Gemini Flash Latest</option>
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="aiThinkingModeSelect">Mode Thinking (Reasoning):</label>
+          <select id="aiThinkingModeSelect" style="margin-top:2px;">
+            <option value="dynamic">Dinamis (Otomatis)</option>
+            <option value="high">Maksimal (High)</option>
+            <option value="medium">Sedang (Medium)</option>
+            <option value="low">Minimal (Low)</option>
+            <option value="off">Nonaktif (Off - Langsung Jawab)</option>
           </select>
         </div>
 
@@ -1398,13 +1408,13 @@
           <input type="password" id="geminiApiKey" placeholder="Masukkan Gemini API Key baru (opsional)" autocomplete="off">
         </div>
 
-        <button class="btn-save" style="margin-top:6px; padding:10px; border-radius:10px; background:#0284c7; color:#fff; border:none; font-weight:bold; cursor:pointer; font-size:0.9rem;" onclick="saveAiSettings()">💾 Simpan Pengaturan AI</button>
+        <button class="btn-save" style="margin-top:6px; padding:10px; border-radius:10px; background:#0284c7; color:#fff; border:none; font-weight:bold; cursor:pointer; font-size:0.9rem;" onclick="saveAiSettings()">Simpan Pengaturan AI</button>
         <div id="aiSaveFeedback" style="font-size:0.78rem; text-align:center; display:none; padding:4px 8px; border-radius:6px; font-weight:600;"></div>
       </div>
 
       <!-- Section Server URL -->
       <div style="background:var(--bg-secondary); padding:12px; border-radius:12px; border:1px solid var(--border); display:flex; flex-direction:column; gap:8px;">
-        <strong style="font-size:0.9rem; color:var(--text-dark);">🌐 Alamat Server PC (Manual)</strong>
+        <strong style="font-size:0.9rem; color:var(--text-dark);">Alamat Server PC (Manual)</strong>
         <p style="font-size:0.75rem; color:var(--text-secondary);">Ganti alamat server jika browser tidak tersambung otomatis:</p>
         <input type="text" id="customServerUrl" placeholder="http://192.168.1.x:8080">
         <button class="btn-save" style="padding:8px; border-radius:8px; background:var(--text-dark); color:#fff; border:none; font-size:0.85rem; cursor:pointer;" onclick="saveCustomServer()">Hubungkan Ulang</button>
@@ -1946,6 +1956,11 @@
           if (badge) badge.textContent = data.model;
         }
 
+        if (data.thinking_mode) {
+          const tSel = document.getElementById('aiThinkingModeSelect');
+          if (tSel) tSel.value = data.thinking_mode;
+        }
+
         if (data.dashscope_base_url) {
           const urlInput = document.getElementById('dashscopeBaseUrl');
           if (urlInput) urlInput.value = data.dashscope_base_url;
@@ -1979,11 +1994,12 @@
 
     async function saveAiSettings() {
       const model = document.getElementById('aiModelSelect').value;
+      const thinkingMode = document.getElementById('aiThinkingModeSelect').value;
       const dashKey = document.getElementById('dashscopeApiKey').value.trim();
       const dashBaseUrl = document.getElementById('dashscopeBaseUrl').value.trim();
       const gemKey = document.getElementById('geminiApiKey').value.trim();
 
-      const payload = { model };
+      const payload = { model, thinking_mode: thinkingMode };
       if (dashKey) payload.dashscope_api_key = dashKey;
       if (dashBaseUrl) payload.dashscope_base_url = dashBaseUrl;
       if (gemKey) payload.gemini_api_key = gemKey;
@@ -2001,14 +2017,14 @@
           if (result.success) {
             fb.style.background = '#dcfce7';
             fb.style.color = '#15803d';
-            fb.textContent = '✅ ' + result.message;
+            fb.textContent = '[OK] ' + result.message;
             document.getElementById('dashscopeApiKey').value = '';
             document.getElementById('geminiApiKey').value = '';
             loadAiSettings();
           } else {
             fb.style.background = '#fee2e2';
             fb.style.color = '#b91c1c';
-            fb.textContent = '❌ ' + (result.message || 'Gagal menyimpan');
+            fb.textContent = '[Error] ' + (result.message || 'Gagal menyimpan');
           }
           setTimeout(() => { fb.style.display = 'none'; }, 3500);
         }
@@ -2017,7 +2033,7 @@
           fb.style.display = 'block';
           fb.style.background = '#fee2e2';
           fb.style.color = '#b91c1c';
-          fb.textContent = '❌ Terjadi kesalahan: ' + err.message;
+          fb.textContent = '[Error] Terjadi kesalahan: ' + err.message;
           setTimeout(() => { fb.style.display = 'none'; }, 3500);
         }
       }

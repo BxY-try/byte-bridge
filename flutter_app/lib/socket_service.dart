@@ -82,12 +82,19 @@ class SocketService {
     _socket?.emit('text_input', {'text': text});
   }
 
-  void sendAiQuery({String? text, String? imageBase64, String? prompt, String? mode}) {
+  void sendAiQuery({
+    String? text,
+    String? imageBase64,
+    String? prompt,
+    String? mode,
+    String? thinkingMode,
+  }) {
     final Map<String, dynamic> payload = {};
     if (text != null && text.isNotEmpty) payload['text'] = text;
     if (imageBase64 != null && imageBase64.isNotEmpty) payload['image'] = imageBase64;
     if (prompt != null && prompt.isNotEmpty) payload['prompt'] = prompt;
     if (mode != null && mode.isNotEmpty) payload['mode'] = mode;
+    if (thinkingMode != null && thinkingMode.isNotEmpty) payload['thinking_mode'] = thinkingMode;
     _socket?.emit('ai_query', payload);
   }
 
