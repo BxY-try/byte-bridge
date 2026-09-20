@@ -15,6 +15,7 @@ Fitur:
 
 import asyncio
 import base64
+import datetime
 import hashlib
 import queue
 import re
@@ -72,6 +73,7 @@ class MediaManager:
         self._cached_thumbnail_hash: str = ""
         self._cached_thumbnail_data: Optional[str] = None
         self._manual_session_id: Optional[str] = None
+        self._last_state_time: float = time.monotonic()
 
         # Mulai background thread
         self._thread = threading.Thread(target=self._worker_thread_main, daemon=True, name="WinRTMediaWorker")
@@ -85,6 +87,18 @@ class MediaManager:
         """Mengembalikan snapshot state media terkini (lengkap dengan thumbnail jika ada)."""
         if not self.ready_event.is_set():
             self.ready_event.wait(timeout=2.0)
+
+        # Perbarui posisi real-time jika ada session aktif
+        if self._current_session:
+            try:
+                pos, dur, min_seek, max_seek = self._calculate_realtime_timeline(self._current_session)
+                self._cached_state["position"] = pos
+                if dur > 0:
+                    self._cached_state["duration"] = dur
+                self._last_state_time = time.monotonic()
+            except Exception:
+                pass
+
         state = dict(self._cached_state)
         # Selalu sertakan thumbnail data saat state diambil secara eksplisit (misal client baru connect)
         if self._cached_thumbnail_data:
@@ -365,15 +379,12 @@ class MediaManager:
                     self._cached_thumbnail_hash = thumb_hash
                     self._cached_thumbnail_data = None
 
-            # 3. Timeline properties
+            # 3. Timeline properties & Playback info
+            pb = self._current_session.get_playback_info()
             timeline = self._current_session.get_timeline_properties()
-            pos = timeline.position.total_seconds() if (timeline and timeline.position) else 0.0
-            dur = timeline.end_time.total_seconds() if (timeline and timeline.end_time) else 0.0
-            min_seek = timeline.min_seek_time.total_seconds() if (timeline and timeline.min_seek_time) else 0.0
-            max_seek = timeline.max_seek_time.total_seconds() if (timeline and timeline.max_seek_time) else dur
+            pos, dur, min_seek, max_seek = self._calculate_realtime_timeline(self._current_session, pb, timeline)
 
             # 4. Playback info & controls
-            pb = self._current_session.get_playback_info()
             status_map = {
                 4: "playing",
                 5: "paused",
@@ -430,11 +441,56 @@ class MediaManager:
             }
 
             self._cached_state = state
+            self._last_state_time = time.monotonic()
             self.state_queue.put(state)
 
         except Exception as e:
             print(f"[MediaManager] Error saat parsing media state: {e}")
             self._fetch_volume_only()
+
+    def _calculate_realtime_timeline(self, session, pb=None, timeline=None) -> Tuple[float, float, float, float]:
+        """
+        Menghitung posisi playback real-time dari Windows GSMTC:
+        Sesuai spesifikasi WinRT, timeline.position adalah snapshot pada saat last_updated_time.
+        Jika sedang playing, posisi real-time dihitung dari:
+        pos = timeline.position + (now_utc - timeline.last_updated_time) * playback_rate
+        """
+        if not session:
+            return 0.0, 0.0, 0.0, 0.0
+        try:
+            if timeline is None:
+                timeline = session.get_timeline_properties()
+            if not timeline:
+                return 0.0, 0.0, 0.0, 0.0
+
+            base_pos = timeline.position.total_seconds() if timeline.position else 0.0
+            dur = timeline.end_time.total_seconds() if timeline.end_time else 0.0
+            min_seek = timeline.min_seek_time.total_seconds() if timeline.min_seek_time else 0.0
+            max_seek = timeline.max_seek_time.total_seconds() if timeline.max_seek_time else dur
+
+            if pb is None:
+                pb = session.get_playback_info()
+
+            status = pb.playback_status if pb else 0
+            # Status 4 = Playing
+            if status == 4 and timeline.last_updated_time:
+                lut = timeline.last_updated_time
+                if lut.tzinfo is None:
+                    lut = lut.replace(tzinfo=datetime.timezone.utc)
+                now_utc = datetime.datetime.now(datetime.timezone.utc)
+                elapsed = (now_utc - lut).total_seconds()
+                rate = pb.playback_rate if (pb and pb.playback_rate is not None and pb.playback_rate > 0) else 1.0
+
+                if 0 <= elapsed < 86400:
+                    current_pos = base_pos + (elapsed * rate)
+                    if dur > 0:
+                        current_pos = min(dur, max(0.0, current_pos))
+                    return round(current_pos, 2), round(dur, 2), round(min_seek, 2), round(max_seek, 2)
+
+            return round(base_pos, 2), round(dur, 2), round(min_seek, 2), round(max_seek, 2)
+        except Exception as e:
+            print(f"[MediaManager] Error calculating realtime timeline: {e}")
+            return 0.0, 0.0, 0.0, 0.0
 
     def _fetch_volume_only(self):
         """Memperbarui hanya volume ketika GSMTC tidak tersedia."""
@@ -531,6 +587,7 @@ class MediaManager:
                 sec = float(value or 0.0)
                 ticks = int(sec * 10_000_000)
                 res = await self._current_session.try_change_playback_position_async(ticks)
+                await asyncio.sleep(0.05)
                 await self._update_and_push_state()
                 return bool(res)
 
@@ -660,4 +717,23 @@ class MediaManager:
         """Perbarui volume di cached_state dan kirim ke queue."""
         self._cached_state["volume"] = volume
         self._cached_state["is_muted"] = is_muted
+
+        # Perbarui juga kalkulasi posisi real-time agar tidak mengirim posisi basi
+        if self._current_session:
+            try:
+                pos, dur, min_seek, max_seek = self._calculate_realtime_timeline(self._current_session)
+                self._cached_state["position"] = pos
+                if dur > 0:
+                    self._cached_state["duration"] = dur
+            except Exception:
+                if self._cached_state.get("status") == "playing" and hasattr(self, "_last_state_time"):
+                    elapsed = time.monotonic() - self._last_state_time
+                    dur = self._cached_state.get("duration", 0.0)
+                    rate = self._cached_state.get("playback_rate", 1.0)
+                    cur_pos = self._cached_state.get("position", 0.0) + (elapsed * rate)
+                    if dur > 0:
+                        cur_pos = min(dur, cur_pos)
+                    self._cached_state["position"] = round(cur_pos, 2)
+
+        self._last_state_time = time.monotonic()
         self.state_queue.put(dict(self._cached_state))

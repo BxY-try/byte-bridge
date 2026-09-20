@@ -141,6 +141,11 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onMediaStateReceived(Map<String, dynamic> data) {
     if (!mounted) return;
     setState(() {
+      final String oldTrackId = '${_mediaState?['session_id']}_${_mediaState?['title']}';
+      final String newTrackId = '${data['session_id']}_${data['title']}';
+      final bool trackChanged = oldTrackId != newTrackId;
+      final String oldStatus = _playbackStatus;
+
       _mediaState = data;
       // Handle thumbnail caching (menghemat 99.8% bandwidth)
       final String? thumbStr = data['thumbnail'] as String?;
@@ -157,14 +162,27 @@ class _HomeScreenState extends State<HomeScreen> {
         _cachedThumbnailBytes = null;
       }
 
-      _serverSeekPos = (data['position'] as num?)?.toDouble() ?? 0.0;
+      final double newServerPos = (data['position'] as num?)?.toDouble() ?? 0.0;
       _mediaDuration = (data['duration'] as num?)?.toDouble() ?? 0.0;
-      _playbackRate = (data['playback_rate'] as num?)?.toDouble() ?? 1.0;
+      final double newRate = (data['playback_rate'] as num?)?.toDouble() ?? 1.0;
+      _playbackRate = newRate > 0 ? newRate : 1.0;
       _playbackStatus = (data['status'] as String?) ?? 'paused';
+      _serverSeekPos = newServerPos;
       _lastMediaSyncTime = DateTime.now();
 
       if (!_isUserDraggingSeek) {
-        _localSeekPos = _serverSeekPos.clamp(0.0, _mediaDuration > 0 ? _mediaDuration : 100.0);
+        final double posDiff = (_serverSeekPos - _localSeekPos).abs();
+        // Reset posisi jika:
+        // 1. Lagu berganti
+        // 2. Status playback berubah (misal dari play ke pause / sebaliknya)
+        // 3. Terjadi lompatan waktu signifikan (> 2.5 detik, misal user seek manual di PC)
+        if (trackChanged || oldStatus != _playbackStatus || posDiff > 2.5) {
+          _localSeekPos = _serverSeekPos.clamp(0.0, _mediaDuration > 0 ? _mediaDuration : 100.0);
+        } else {
+          // Jika memutar lagu yang sama dan update berasal dari kontrol minor (volume/speed/mute):
+          // Pertahankan kontinuitas timeline lokal agar tidak melompat mundur (jitter)
+          _serverSeekPos = _localSeekPos;
+        }
       }
       if (!_isUserDraggingVolume) {
         _localVolume = (data['volume'] as num?)?.toDouble() ?? 50.0;
@@ -2137,7 +2155,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   : null,
               onChangeEnd: (isAvailable && _mediaDuration > 0)
                   ? (val) {
-                      _isUserDraggingSeek = false;
+                      setState(() {
+                        _isUserDraggingSeek = false;
+                        _localSeekPos = val;
+                        _serverSeekPos = val;
+                        _lastMediaSyncTime = DateTime.now();
+                      });
                       _sendMediaCommand('seek', val);
                     }
                   : null,
@@ -2389,10 +2412,15 @@ class _HomeScreenState extends State<HomeScreen> {
             isActive: false,
             enabled: isAvailable,
             onTap: () {
+              final nextIndex = (_currentSpeedIndex + 1) % _speedOptions.length;
+              final targetRate = _speedOptions[nextIndex];
               setState(() {
-                _currentSpeedIndex = (_currentSpeedIndex + 1) % _speedOptions.length;
+                _currentSpeedIndex = nextIndex;
+                _playbackRate = targetRate;
+                _serverSeekPos = _localSeekPos;
+                _lastMediaSyncTime = DateTime.now();
               });
-              _sendMediaCommand('set_rate', _speedOptions[_currentSpeedIndex]);
+              _sendMediaCommand('set_rate', targetRate);
             },
           ),
         ],

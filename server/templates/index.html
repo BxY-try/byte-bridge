@@ -1587,17 +1587,28 @@
       }
 
       // 3. Timeline & Interpolasi
-      serverPosition = data.position || 0;
-      serverDuration = data.duration || 0;
-      playbackRate = data.playback_rate || 1.0;
+      const newPos = (typeof data.position === 'number') ? data.position : 0;
+      serverDuration = (typeof data.duration === 'number') ? data.duration : 0;
+      playbackRate = (typeof data.playback_rate === 'number' && data.playback_rate > 0) ? data.playback_rate : 1.0;
+      const oldStatus = playbackStatus;
       playbackStatus = data.status || 'paused';
-      lastSyncTime = performance.now();
 
       mediaSeekSlider.max = serverDuration > 0 ? serverDuration : 100;
       if (!isUserSeeking) {
-        mediaSeekSlider.value = serverPosition;
-        mediaTimeCurrent.textContent = formatTime(serverPosition);
+        const curSliderVal = parseFloat(mediaSeekSlider.value) || 0;
+        const posDiff = Math.abs(newPos - curSliderVal);
+        if (oldStatus !== playbackStatus || posDiff > 2.5) {
+          serverPosition = newPos;
+          mediaSeekSlider.value = serverPosition;
+          mediaTimeCurrent.textContent = formatTime(serverPosition);
+        } else {
+          // Jaga kontinuitas jika kontrol minor (volume/mute/speed)
+          serverPosition = curSliderVal;
+        }
+      } else {
+        serverPosition = newPos;
       }
+      lastSyncTime = performance.now();
       mediaTimeTotal.textContent = formatTime(serverDuration);
 
       // 4. Volume & Mute
@@ -1680,7 +1691,10 @@
     });
     mediaSeekSlider.addEventListener('change', () => {
       isUserSeeking = false;
-      sendMediaCmd('seek', parseFloat(mediaSeekSlider.value));
+      const targetVal = parseFloat(mediaSeekSlider.value) || 0;
+      serverPosition = targetVal;
+      lastSyncTime = performance.now();
+      sendMediaCmd('seek', targetVal);
     });
 
     // Volume Slider Event
@@ -1709,6 +1723,10 @@
     function cyclePlaybackRate() {
       currentSpeedIdx = (currentSpeedIdx + 1) % speedOptions.length;
       const targetRate = speedOptions[currentSpeedIdx];
+      playbackRate = targetRate;
+      mediaSpeedBadge.textContent = targetRate + 'x';
+      serverPosition = parseFloat(mediaSeekSlider.value) || serverPosition;
+      lastSyncTime = performance.now();
       sendMediaCmd('set_rate', targetRate);
     }
 
